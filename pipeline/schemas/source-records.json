@@ -1,0 +1,235 @@
+{
+  "schema": "rmf.econ.source-records/1",
+  "title": "Date-bounded record schemas for source responses (DATA_CONVENTIONS section 5). A record matches only the schema in force for its date, field for field.",
+  "types": {
+    "date": "a JSON string YYYY-MM-DD",
+    "number": "a JSON number",
+    "decimal-text": "a JSON string of digits with an optional sign and fraction",
+    "decimal-text-or-null": "decimal-text, or the JSON string \"null\" (an absence, never zero)",
+    "digits": "a JSON string of one or more digits",
+    "flag": "a JSON string, one of the listed values"
+  },
+  "records": {
+    "effr-2000": {
+      "source": "nyfed-markets",
+      "container": "refRates",
+      "date_field": "effectiveDate",
+      "from": "2000-07-03",
+      "to": "2008-12-15",
+      "fields": {
+        "effectiveDate": {
+          "type": "date"
+        },
+        "type": {
+          "type": "flag",
+          "values": [
+            "EFFR"
+          ]
+        },
+        "percentRate": {
+          "type": "number"
+        },
+        "targetRateFrom": {
+          "type": "number"
+        },
+        "intraDayLow": {
+          "type": "number"
+        },
+        "intraDayHigh": {
+          "type": "number"
+        },
+        "stdDeviation": {
+          "type": "number"
+        },
+        "revisionIndicator": {
+          "type": "flag",
+          "values": [
+            "",
+            "r"
+          ]
+        }
+      },
+      "optional": {}
+    },
+    "effr-2008": {
+      "source": "nyfed-markets",
+      "container": "refRates",
+      "date_field": "effectiveDate",
+      "from": "2008-12-16",
+      "to": "2016-02-29",
+      "fields": {
+        "effectiveDate": {
+          "type": "date"
+        },
+        "type": {
+          "type": "flag",
+          "values": [
+            "EFFR"
+          ]
+        },
+        "percentRate": {
+          "type": "number"
+        },
+        "targetRateFrom": {
+          "type": "number"
+        },
+        "targetRateTo": {
+          "type": "number"
+        },
+        "intraDayLow": {
+          "type": "number"
+        },
+        "intraDayHigh": {
+          "type": "number"
+        },
+        "stdDeviation": {
+          "type": "number"
+        },
+        "revisionIndicator": {
+          "type": "flag",
+          "values": [
+            "",
+            "r"
+          ]
+        }
+      },
+      "optional": {}
+    },
+    "effr-2016": {
+      "source": "nyfed-markets",
+      "container": "refRates",
+      "date_field": "effectiveDate",
+      "from": "2016-03-01",
+      "to": null,
+      "fields": {
+        "effectiveDate": {
+          "type": "date"
+        },
+        "type": {
+          "type": "flag",
+          "values": [
+            "EFFR"
+          ]
+        },
+        "percentRate": {
+          "type": "number"
+        },
+        "targetRateFrom": {
+          "type": "number"
+        },
+        "targetRateTo": {
+          "type": "number"
+        },
+        "revisionIndicator": {
+          "type": "flag",
+          "values": [
+            "",
+            "r"
+          ]
+        }
+      },
+      "optional": {
+        "footnoteId": {
+          "type": "number"
+        },
+        "percentPercentile1": {
+          "type": "number"
+        },
+        "percentPercentile25": {
+          "type": "number"
+        },
+        "percentPercentile75": {
+          "type": "number"
+        },
+        "percentPercentile99": {
+          "type": "number"
+        },
+        "volumeInBillions": {
+          "type": "number"
+        }
+      }
+    },
+    "dtp-1993": {
+      "source": "fiscaldata",
+      "container": "data",
+      "date_field": "record_date",
+      "from": "1993-04-01",
+      "to": null,
+      "fields": {
+        "record_date": {
+          "type": "date"
+        },
+        "debt_held_public_amt": {
+          "type": "decimal-text-or-null"
+        },
+        "intragov_hold_amt": {
+          "type": "decimal-text-or-null"
+        },
+        "tot_pub_debt_out_amt": {
+          "type": "decimal-text"
+        },
+        "src_line_nbr": {
+          "type": "digits"
+        },
+        "record_fiscal_year": {
+          "type": "digits"
+        },
+        "record_fiscal_quarter": {
+          "type": "digits"
+        },
+        "record_calendar_year": {
+          "type": "digits"
+        },
+        "record_calendar_quarter": {
+          "type": "digits"
+        },
+        "record_calendar_month": {
+          "type": "digits"
+        },
+        "record_calendar_day": {
+          "type": "digits"
+        }
+      },
+      "optional": {}
+    }
+  },
+  "sdmx": {
+    "h6-sdmx-2021": {
+      "source": "frb-releases",
+      "file": "H6_data.xml",
+      "series_attributes": {
+        "SERIES_NAME": "string",
+        "ADJUSTED": [
+          "SA",
+          "NSA"
+        ],
+        "CURRENCY": [
+          "USD"
+        ],
+        "FREQ": [
+          "129"
+        ],
+        "UNIT": [
+          "Currency"
+        ],
+        "UNIT_MULT": [
+          "1e+09"
+        ]
+      },
+      "observation_attributes": {
+        "TIME_PERIOD": "month-end date YYYY-MM-DD",
+        "OBS_VALUE": "decimal-text",
+        "OBS_STATUS": [
+          "A",
+          "NA",
+          "ND",
+          "NC"
+        ]
+      },
+      "duplicates": "A registered SERIES_NAME may appear more than once (one copy per table group, in different XML namespaces); every copy must be identical in attributes and observations, the namespace ignored",
+      "parse": "XML with DTDs and external entities disabled; stream-parsed",
+      "scope": "Binds only the registered series (the file also holds weekly series and one in millions); child Annotations are allowed and not stored",
+      "applies": "Responses from the 2021-02-23 release (the first monthly release); periods from 1959-01"
+    }
+  }
+}

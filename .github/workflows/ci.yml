@@ -1,0 +1,36 @@
+# Tests, the independent checker and the deterministic fixture scenario. Fixtures only: no
+# provider is contacted and no secret is used.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Install the test runner
+        run: npm ci --ignore-scripts
+      - name: Pipeline unit tests
+        run: npx vitest run
+      - name: Independent checker, plain mode
+        run: python3 -I tests/datacheck/check_p22.py
+      - name: Fixture scenario twice, then the independent checker on its root
+        run: node tools/datacheck.mjs

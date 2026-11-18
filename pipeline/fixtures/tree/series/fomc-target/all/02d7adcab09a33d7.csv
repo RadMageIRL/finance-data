@@ -1,0 +1,81 @@
+# FOMC federal funds target (Percent)
+# © 2026 Federal Reserve Bank of New York. Content from the New York Fed subject to the Terms of Use at newyorkfed.org.
+# The Effective Federal Funds Rate (EFFR) is subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for publication of the Effective Federal Funds Rate (EFFR) by RadMage Finance, does not sanction or endorse any particular republication, and has no liability for your use.
+# Terms: https://www.newyorkfed.org/termsofuse
+# Derived by RadMage Finance from the New York Fed's EFFR records: each change point is the first business day whose EFFR record shows a new target. Before December 16, 2008 the target was a single rate; from then on, a range.
+# Segment all: 2000-07-03 to 2026-09-17.
+# Retrieved 2026-11-16T14:17:00Z by RadMage Finance.
+effective,kind,value_percent,lower_percent,upper_percent,released,released_basis
+2000-07-03,rate,6.50,,,,not-recorded
+2001-01-03,rate,6.00,,,,not-recorded
+2001-01-31,rate,5.50,,,,not-recorded
+2001-03-20,rate,5.00,,,,not-recorded
+2001-04-18,rate,4.50,,,,not-recorded
+2001-05-15,rate,4.00,,,,not-recorded
+2001-06-27,rate,3.75,,,,not-recorded
+2001-08-21,rate,3.50,,,,not-recorded
+2001-09-17,rate,3.00,,,,not-recorded
+2001-10-02,rate,2.50,,,,not-recorded
+2001-11-06,rate,2.00,,,,not-recorded
+2001-12-11,rate,1.75,,,,not-recorded
+2002-11-06,rate,1.25,,,,not-recorded
+2003-06-25,rate,1.00,,,,not-recorded
+2004-06-30,rate,1.25,,,,not-recorded
+2004-08-10,rate,1.50,,,,not-recorded
+2004-09-21,rate,1.75,,,,not-recorded
+2004-11-10,rate,2.00,,,,not-recorded
+2004-12-14,rate,2.25,,,,not-recorded
+2005-02-02,rate,2.50,,,,not-recorded
+2005-03-22,rate,2.75,,,,not-recorded
+2005-05-03,rate,3.00,,,,not-recorded
+2005-06-30,rate,3.25,,,,not-recorded
+2005-08-09,rate,3.50,,,,not-recorded
+2005-09-20,rate,3.75,,,,not-recorded
+2005-11-01,rate,4.00,,,,not-recorded
+2005-12-13,rate,4.25,,,,not-recorded
+2006-01-31,rate,4.50,,,,not-recorded
+2006-03-28,rate,4.75,,,,not-recorded
+2006-05-10,rate,5.00,,,,not-recorded
+2006-06-29,rate,5.25,,,,not-recorded
+2007-09-18,rate,4.75,,,,not-recorded
+2007-10-31,rate,4.50,,,,not-recorded
+2007-12-11,rate,4.25,,,,not-recorded
+2008-01-22,rate,3.50,,,,not-recorded
+2008-01-30,rate,3.00,,,,not-recorded
+2008-03-18,rate,2.25,,,,not-recorded
+2008-04-30,rate,2.00,,,,not-recorded
+2008-10-08,rate,1.50,,,,not-recorded
+2008-10-29,rate,1.00,,,,not-recorded
+2008-12-16,range,,0.00,0.25,,not-recorded
+2015-12-17,range,,0.25,0.50,,not-recorded
+2016-12-15,range,,0.50,0.75,,not-recorded
+2017-03-16,range,,0.75,1.00,,not-recorded
+2017-06-15,range,,1.00,1.25,,not-recorded
+2017-12-14,range,,1.25,1.50,,not-recorded
+2018-03-22,range,,1.50,1.75,,not-recorded
+2018-06-14,range,,1.75,2.00,,not-recorded
+2018-09-27,range,,2.00,2.25,,not-recorded
+2018-12-20,range,,2.25,2.50,,not-recorded
+2019-08-01,range,,2.00,2.25,,not-recorded
+2019-09-19,range,,1.75,2.00,,not-recorded
+2019-10-31,range,,1.50,1.75,,not-recorded
+2020-03-04,range,,1.00,1.25,,not-recorded
+2020-03-16,range,,0.00,0.25,,not-recorded
+2022-03-17,range,,0.25,0.50,,not-recorded
+2022-05-05,range,,0.75,1.00,,not-recorded
+2022-06-16,range,,1.50,1.75,,not-recorded
+2022-07-28,range,,2.25,2.50,,not-recorded
+2022-09-22,range,,3.00,3.25,,not-recorded
+2022-11-03,range,,3.75,4.00,,not-recorded
+2022-12-15,range,,4.25,4.50,,not-recorded
+2023-02-02,range,,4.50,4.75,,not-recorded
+2023-03-23,range,,4.75,5.00,,not-recorded
+2023-05-04,range,,5.00,5.25,,not-recorded
+2023-07-27,range,,5.25,5.50,,not-recorded
+2024-09-19,range,,4.75,5.00,,not-recorded
+2024-11-08,range,,4.50,4.75,,not-recorded
+2024-12-19,range,,4.25,4.50,,not-recorded
+2025-09-18,range,,4.00,4.25,,not-recorded
+2025-10-30,range,,3.75,4.00,,not-recorded
+2025-12-11,range,,3.50,3.75,,not-recorded
+2026-09-17,range,,3.75,4.00,,not-recorded

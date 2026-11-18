@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.publications/1",
+  "title": "Every snapshot ever published and what became of it (DATA_CONVENTIONS section 17.5)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "publications"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.publications/1"
+    },
+    "publications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "snapshot",
+          "events"
+        ],
+        "properties": {
+          "snapshot": {
+            "type": "string",
+            "pattern": "^\\d{8}T\\d{6}Z$"
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "at",
+                "run",
+                "status",
+                "reason"
+              ],
+              "properties": {
+                "at": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+                },
+                "run": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "status": {
+                  "enum": [
+                    "active",
+                    "superseded",
+                    "withdrawn"
+                  ]
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

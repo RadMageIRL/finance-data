@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.revisions/1",
+  "title": "A series' revision log for one year of detection, append-only (DATA_CONVENTIONS section 10)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "series",
+    "year",
+    "records"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.revisions/1"
+    },
+    "series": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "year": {
+      "type": "integer",
+      "minimum": 2026
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "detected_at",
+          "snapshot",
+          "period",
+          "field",
+          "before",
+          "after",
+          "kind",
+          "basis",
+          "release_date"
+        ],
+        "properties": {
+          "detected_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          },
+          "snapshot": {
+            "type": "string",
+            "pattern": "^\\d{8}T\\d{6}Z$"
+          },
+          "period": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$"
+          },
+          "field": {
+            "type": "string",
+            "pattern": "^(period|value|lower|upper|kind|effective|flags|missing|released|starts_before_data|extra\\.[a-z][a-z0-9_]*)$"
+          },
+          "before": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "expected",
+              "approved-hold",
+              "rollback"
+            ]
+          },
+          "basis": {
+            "type": "string",
+            "minLength": 1
+          },
+          "release_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

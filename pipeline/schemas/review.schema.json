@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.review/3",
+  "title": "One review decision with the original and proposed values (DATA_CONVENTIONS section 17.5)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "series",
+    "candidate_sha256",
+    "decision",
+    "decided_at",
+    "run",
+    "reviewer",
+    "reason",
+    "hold",
+    "affected_periods",
+    "changes",
+    "reviewer_permission",
+    "permission_checked_at",
+    "publication"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.review/3"
+    },
+    "series": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "candidate_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "decision": {
+      "enum": [
+        "approve",
+        "reject",
+        "clear",
+        "withdrawn"
+      ]
+    },
+    "decided_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "run": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewer": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "hold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "opened_at"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "opened_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        }
+      }
+    },
+    "affected_periods": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$"
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "period",
+          "field",
+          "before",
+          "after"
+        ],
+        "properties": {
+          "period": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$"
+          },
+          "field": {
+            "type": "string",
+            "minLength": 1
+          },
+          "before": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "reviewer_permission": {
+      "anyOf": [
+        {
+          "enum": [
+            "admin",
+            "maintain",
+            "write",
+            "triage",
+            "read",
+            "none"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "permission_checked_at": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "snapshot"
+      ],
+      "properties": {
+        "outcome": {
+          "enum": [
+            "published",
+            "frozen",
+            "withdrawn",
+            "cleared"
+          ]
+        },
+        "snapshot": {
+          "type": "string",
+          "pattern": "^\\d{8}T\\d{6}Z$"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.runs/2",
+  "title": "The last 100 runs, newest first (DATA_CONVENTIONS section 14.1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "runs"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.runs/2"
+    },
+    "runs": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "trigger",
+          "started_at",
+          "ended_at",
+          "outcome",
+          "snapshot",
+          "series",
+          "alerts",
+          "absences"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "trigger": {
+            "enum": [
+              "schedule",
+              "manual",
+              "rollback",
+              "restore",
+              "review"
+            ]
+          },
+          "started_at": {
+            "$ref": "#/$defs/time"
+          },
+          "ended_at": {
+            "$ref": "#/$defs/time"
+          },
+          "outcome": {
+            "enum": [
+              "published",
+              "nothing-due",
+              "no-change",
+              "gate-failed",
+              "failed",
+              "refused"
+            ]
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{8}T\\d{6}Z$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "series": {
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "unchanged",
+                "appended",
+                "revised-expected",
+                "revised-unexpected",
+                "invalid",
+                "failed",
+                "not-due"
+              ]
+            }
+          },
+          "alerts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "pruned": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "absences": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "series",
+                "period",
+                "kind",
+                "detail"
+              ],
+              "properties": {
+                "series": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "period": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$"
+                },
+                "kind": {
+                  "enum": [
+                    "expected-nonpublication",
+                    "documented-gap",
+                    "collection-failure",
+                    "source-overdue",
+                    "undocumented-gap"
+                  ]
+                },
+                "detail": {
+                  "enum": [
+                    "holiday",
+                    "not-yet-due",
+                    "known-gap",
+                    "fetch-failed",
+                    "response-invalid",
+                    "after-deadline",
+                    "inside-history"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "time": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    }
+  }
+}

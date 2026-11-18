@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.object/1",
+  "title": "One segment of one series, content-addressed and immutable (DATA_CONVENTIONS sections 6 and 7)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "series", "segment", "observations"],
+  "properties": {
+    "schema": { "const": "rmf.econ.object/1" },
+    "series": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "minLength": 2, "maxLength": 40 },
+    "segment": { "type": "string", "pattern": "^(\\d{4}|all)$" },
+    "observations": {
+      "type": "array",
+      "items": { "oneOf": [{ "$ref": "#/$defs/observation" }, { "$ref": "#/$defs/changePoint" }] }
+    }
+  },
+  "$defs": {
+    "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "decimal": { "type": "string", "pattern": "^-?\\d+(\\.\\d+)?$" },
+    "released": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "basis"],
+      "properties": {
+        "date": { "anyOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] },
+        "basis": { "enum": ["calendar", "rule", "first-seen", "not-recorded"] }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["period", "value", "released", "flags"],
+      "properties": {
+        "period": { "type": "string", "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$" },
+        "value": { "anyOf": [{ "$ref": "#/$defs/decimal" }, { "type": "null" }] },
+        "missing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "note"],
+          "properties": { "code": { "type": "string", "minLength": 1 }, "note": { "type": "string" } }
+        },
+        "released": { "$ref": "#/$defs/released" },
+        "flags": { "type": "array", "items": { "type": "string", "pattern": "^(r|footnote:\\d+)$" } },
+        "extra": { "type": "object", "additionalProperties": { "anyOf": [{ "$ref": "#/$defs/decimal" }, { "type": "null" }] } }
+      }
+    },
+    "changePoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effective", "kind", "released"],
+      "properties": {
+        "effective": { "$ref": "#/$defs/date" },
+        "kind": { "enum": ["rate", "range"] },
+        "value": { "$ref": "#/$defs/decimal" },
+        "lower": { "$ref": "#/$defs/decimal" },
+        "upper": { "$ref": "#/$defs/decimal" },
+        "starts_before_data": { "const": true },
+        "released": { "$ref": "#/$defs/released" }
+      }
+    }
+  }
+}

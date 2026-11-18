@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.alerts/1",
+  "title": "The alert ledger: one entry per open alert key (DATA_CONVENTIONS section 17.8)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "open"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.alerts/1"
+    },
+    "open": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "severity",
+          "title",
+          "body",
+          "first_seen",
+          "last_seen",
+          "runs"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*(:[a-z0-9][a-z0-9-]*)?$"
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "warning"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "first_seen": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          },
+          "last_seen": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          },
+          "runs": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}

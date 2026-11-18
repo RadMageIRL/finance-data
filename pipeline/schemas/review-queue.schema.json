@@ -1,0 +1,366 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.review-queue/3",
+  "title": "Held candidates waiting for a person, and every decision taken (DATA_CONVENTIONS section 17.5)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "open",
+    "frozen",
+    "decisions",
+    "refusals"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.review-queue/3"
+    },
+    "open": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "series",
+          "candidate_sha256",
+          "archive_asset",
+          "bytes",
+          "reason",
+          "opened_at",
+          "updated_at",
+          "changes"
+        ],
+        "properties": {
+          "series": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "candidate_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "archive_asset": {
+            "type": "string",
+            "pattern": "^archive-\\d{4}-\\d{2}/[a-z0-9][a-z0-9._-]*$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "opened_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          },
+          "updated_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          },
+          "changes": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "changed",
+              "removed",
+              "added"
+            ],
+            "properties": {
+              "changed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "removed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "added": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "series",
+          "candidate_sha256",
+          "decision",
+          "decided_at",
+          "run",
+          "reviewer",
+          "reason",
+          "affected_periods",
+          "record",
+          "reviewer_permission",
+          "permission_checked_at",
+          "publication"
+        ],
+        "properties": {
+          "series": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "candidate_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "reject",
+              "clear",
+              "withdrawn"
+            ]
+          },
+          "decided_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          },
+          "run": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "affected_periods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$"
+            }
+          },
+          "record": {
+            "type": "string",
+            "pattern": "^reviews/[a-z0-9-]+/[0-9a-f]{16}-(approve|reject|clear|withdrawn)-\\d{8}T\\d{6}Z\\.json$"
+          },
+          "reviewer_permission": {
+            "anyOf": [
+              {
+                "enum": [
+                  "admin",
+                  "maintain",
+                  "write",
+                  "triage",
+                  "read",
+                  "none"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permission_checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publication": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "outcome",
+              "snapshot"
+            ],
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "published",
+                  "frozen",
+                  "withdrawn",
+                  "cleared"
+                ]
+              },
+              "snapshot": {
+                "type": "string",
+                "pattern": "^\\d{8}T\\d{6}Z$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "frozen": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "series",
+          "candidate_sha256",
+          "frozen_at",
+          "run",
+          "reviewer",
+          "reason",
+          "affected_periods",
+          "origin",
+          "locked_changes"
+        ],
+        "properties": {
+          "series": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "candidate_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "frozen_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          },
+          "run": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "affected_periods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$"
+            }
+          },
+          "origin": {
+            "enum": [
+              "rejected",
+              "rolled-back"
+            ]
+          },
+          "locked_changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "period",
+                "field"
+              ],
+              "properties": {
+                "period": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$"
+                },
+                "field": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "refusals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "series",
+          "candidate_sha256",
+          "decision",
+          "reviewer",
+          "reviewer_permission",
+          "permission_checked_at",
+          "at",
+          "run",
+          "refused"
+        ],
+        "properties": {
+          "series": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "candidate_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewer_permission": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permission_checked_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          },
+          "run": {
+            "type": "string",
+            "minLength": 1
+          },
+          "refused": {
+            "enum": [
+              "not-held",
+              "not-locked",
+              "stale-candidate",
+              "bad-decision",
+              "locked",
+              "missing-text",
+              "permission",
+              "permission-time",
+              "automation"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

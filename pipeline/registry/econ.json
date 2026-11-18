@@ -1,0 +1,953 @@
+{
+  "schema": "rmf.econ.registry/3",
+  "conventions": "v0.5",
+  "family": "econ",
+  "holiday_table": "fed-holidays.json",
+  "family_policy": {
+    "retention": "full-history",
+    "archive": "permanent",
+    "unexpected_revision": "hold",
+    "interpolation": "never",
+    "namespace": "/finance/data/econ/",
+    "review": {
+      "permissions": [
+        "admin",
+        "maintain",
+        "write"
+      ]
+    }
+  },
+  "sources": {
+    "nyfed-markets": {
+      "publisher": "Federal Reserve Bank of New York",
+      "host": "markets.newyorkfed.org",
+      "terms_url": "https://www.newyorkfed.org/termsofuse",
+      "terms_checked": "2026-11-16",
+      "license": "The New York Fed grants you a non-exclusive license, subject to the Terms, to use, copy, and distribute Content for your personal or business purposes.",
+      "commercial_use": "allowed-with-conditions",
+      "attribution": "© {year} Federal Reserve Bank of New York. Content from the New York Fed subject to the Terms of Use at newyorkfed.org.",
+      "notice": "The {data_name} is subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for publication of the {data_name} by RadMage Finance, does not sanction or endorse any particular republication, and has no liability for your use.",
+      "pass_through": true,
+      "modification_label": true,
+      "key_required": false,
+      "request": {
+        "min_interval_seconds": 1,
+        "max_retries": 3,
+        "user_agent": "RadMage Finance (+https://radmagelabs.com/finance/)",
+        "contact": null
+      },
+      "calendar": "nyfed-business-days"
+    },
+    "fiscaldata": {
+      "publisher": "U.S. Department of the Treasury, Bureau of the Fiscal Service",
+      "host": "api.fiscaldata.treasury.gov",
+      "terms_url": "https://fiscaldata.treasury.gov/api-documentation/",
+      "terms_checked": "2026-11-16",
+      "license": "The data is offered free, without restriction, and available to copy, adapt, redistribute, or otherwise use for non-commercial or commercial purposes.",
+      "commercial_use": "allowed",
+      "attribution": "Source: U.S. Department of the Treasury, Bureau of the Fiscal Service, Debt to the Penny.",
+      "notice": null,
+      "pass_through": false,
+      "modification_label": false,
+      "key_required": false,
+      "request": {
+        "min_interval_seconds": 1,
+        "max_retries": 3,
+        "user_agent": "RadMage Finance (+https://radmagelabs.com/finance/)",
+        "contact": null
+      },
+      "calendar": "fiscaldata-release"
+    },
+    "frb-releases": {
+      "publisher": "Board of Governors of the Federal Reserve System",
+      "host": "www.federalreserve.gov",
+      "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+      "terms_checked": "2026-11-16",
+      "license": "Unless otherwise indicated, information on Board's website is in the public domain and may be copied and distributed without permission. Please cite to the Board as the source of the information.",
+      "commercial_use": "allowed",
+      "attribution": "Source: Board of Governors of the Federal Reserve System, H.6 Money Stock Measures.",
+      "notice": null,
+      "pass_through": false,
+      "modification_label": false,
+      "key_required": false,
+      "request": {
+        "min_interval_seconds": 1,
+        "max_retries": 3,
+        "user_agent": "RadMage Finance (+https://radmagelabs.com/finance/)",
+        "contact": null
+      },
+      "calendar": "frb-h6-release-dates",
+      "route_notices": [
+        {
+          "route": "Data Download Program URLs (datadownload/Choose.aspx and datadownload/Output.aspx) and preformatted packages",
+          "date": "2027-03-31",
+          "affects_registered_route": false,
+          "text": "Q: Will the current DDP URLs (e.g., `datadownload/Choose.aspx?rel=...` or `datadownload/Output.aspx?rel=...&filetype=zip`) continue to work? A: No. These URLs will no longer be operational once the functionality is removed on March 31, 2027. To continue accessing release data on the Board's site, use the XML file linked from the release landing page (for example, https://www.federalreserve.gov/releases/h41/data/FRB_h41_xml.zip for the H.4.1).",
+          "checked": "2026-11-18",
+          "milestone": "The registered route is the XML file linked from the H.6 landing page, which the Board says remains available. On the first due run on or after the date, confirm that the registered endpoint and releaseDates.json still answer in the registered format."
+        },
+        {
+          "route": "Data Download Program pages",
+          "date": "2027-07-01",
+          "affects_registered_route": false,
+          "text": "Although the Data Download Program is being retired users continue to have access to expanded functionality through FRED ... The XML format is still available on Board statistical release pages for users who wish to manually download Board data from the Board's website.",
+          "checked": "2026-11-18",
+          "milestone": "After the DDP page removal, confirm again that the registered endpoint and releaseDates.json still answer in the registered format."
+        }
+      ]
+    }
+  },
+  "calendars": {
+    "nyfed-business-days": {
+      "kind": "rule",
+      "text": "Published at about 9:00 a.m. ET on the business day after the rate's date; revised the same day only, except in extraordinary circumstances (New York Fed, checked 2026-11-16).",
+      "publish_time": "09:00",
+      "publish_time_zone": "America/New_York",
+      "grace_hours": 6,
+      "rule_valid_from": "2026-10-05",
+      "business_day_zone": "America/New_York"
+    },
+    "fiscaldata-release": {
+      "kind": "calendar",
+      "url": "https://api.fiscaldata.treasury.gov/services/calendar/release",
+      "dataset_id": "015-BFS-2014Q3-065",
+      "ignore_fields": [
+        "released"
+      ],
+      "text": "Updated at the end of each business day with data from the previous business day (Fiscal Data, checked 2026-11-16). Calendar times such as 21:15 carry no stated time zone.",
+      "publish_time": null,
+      "publish_time_zone": "unknown",
+      "publish_time_zone_candidates": [
+        "America/New_York",
+        "UTC"
+      ],
+      "grace_hours": 6,
+      "business_day_zone": "America/New_York"
+    },
+    "frb-h6-release-dates": {
+      "kind": "calendar",
+      "url": "https://www.federalreserve.gov/releases/h6/releaseDates.json",
+      "markers": {
+        "**": "annual-seasonal-factor-review",
+        "***": "first-monthly-release"
+      },
+      "text": "Released on the fourth Tuesday of every month, generally at 1:00 p.m., with exceptions (Board, checked 2026-11-16); \"For release at 1:00 p.m. Eastern Time\" (H.6 release of March 24, 2026, checked 2026-11-18).",
+      "publish_time": "13:00",
+      "publish_time_zone": "America/New_York",
+      "grace_hours": 6,
+      "calendar_valid_from": "2021-02-23",
+      "business_day_zone": "America/New_York"
+    }
+  },
+  "series": [
+    {
+      "id": "effr",
+      "title": "Effective federal funds rate",
+      "short_title": "EFFR",
+      "source": "nyfed-markets",
+      "data_name": "Effective Federal Funds Rate (EFFR)",
+      "class": "market_observation",
+      "frequency": "business-day",
+      "unit": "percent",
+      "unit_label": "Percent",
+      "decimals": 2,
+      "seasonal_adjustment": "none",
+      "segment": "year",
+      "fetch": {
+        "endpoint": "https://markets.newyorkfed.org/api/rates/unsecured/effr/search.json",
+        "format": "json",
+        "parameters": {
+          "startDate": "{start}",
+          "endDate": "{end}"
+        },
+        "shared_with": [
+          "fomc-target"
+        ]
+      },
+      "extract": [
+        {
+          "schema": "effr-2000",
+          "from": "2000-07-03",
+          "to": "2008-12-15",
+          "value": "percentRate",
+          "extra": {
+            "intraDayLow": "intraday_low",
+            "intraDayHigh": "intraday_high",
+            "stdDeviation": "std_deviation"
+          }
+        },
+        {
+          "schema": "effr-2008",
+          "from": "2008-12-16",
+          "to": "2016-02-29",
+          "value": "percentRate",
+          "extra": {
+            "intraDayLow": "intraday_low",
+            "intraDayHigh": "intraday_high",
+            "stdDeviation": "std_deviation"
+          }
+        },
+        {
+          "schema": "effr-2016",
+          "from": "2016-03-01",
+          "to": null,
+          "value": "percentRate",
+          "extra": {
+            "percentPercentile1": "p1",
+            "percentPercentile25": "p25",
+            "percentPercentile75": "p75",
+            "percentPercentile99": "p99",
+            "volumeInBillions": "volume_usd_billions"
+          }
+        }
+      ],
+      "range": {
+        "min": "-1.00",
+        "max": "25.00"
+      },
+      "continuity": {
+        "max_gap": 6,
+        "unit": "days"
+      },
+      "revision": {
+        "window": "publication-day",
+        "statistics_window_business_days": 20
+      },
+      "staleness": {
+        "after_business_days": 3
+      },
+      "release": {
+        "basis": "rule",
+        "calendar": "nyfed-business-days"
+      },
+      "earliest": "2000-07-03",
+      "known_inconsistencies": [
+        {
+          "period": "2003-07-20",
+          "text": "A Sunday record whose values equal those of Monday 2003-07-21; kept as published."
+        }
+      ]
+    },
+    {
+      "id": "fomc-target",
+      "title": "FOMC federal funds target",
+      "short_title": "Fed funds target",
+      "source": "nyfed-markets",
+      "data_name": "Effective Federal Funds Rate (EFFR)",
+      "class": "policy_target",
+      "frequency": "change-point",
+      "unit": "percent",
+      "unit_label": "Percent",
+      "decimals": 2,
+      "seasonal_adjustment": "none",
+      "segment": "all",
+      "fetch": {
+        "endpoint": "https://markets.newyorkfed.org/api/rates/unsecured/effr/search.json",
+        "format": "json",
+        "parameters": {
+          "startDate": "{start}",
+          "endDate": "{end}"
+        },
+        "shared_with": [
+          "effr"
+        ]
+      },
+      "extract": [
+        {
+          "schema": "effr-2000",
+          "from": "2000-07-03",
+          "to": "2008-12-15",
+          "kind": "rate",
+          "value": "targetRateFrom"
+        },
+        {
+          "schema": "effr-2008",
+          "from": "2008-12-16",
+          "to": "2016-02-29",
+          "kind": "range",
+          "lower": "targetRateFrom",
+          "upper": "targetRateTo"
+        },
+        {
+          "schema": "effr-2016",
+          "from": "2016-03-01",
+          "to": null,
+          "kind": "range",
+          "lower": "targetRateFrom",
+          "upper": "targetRateTo"
+        }
+      ],
+      "derived_from": {
+        "series": "effr",
+        "method": "Derived by RadMage Finance from the New York Fed's EFFR records: each change point is the first business day whose EFFR record shows a new target. Before December 16, 2008 the target was a single rate; from then on, a range."
+      },
+      "range": {
+        "min": "0.00",
+        "max": "25.00"
+      },
+      "continuity": {
+        "max_gap": null,
+        "unit": null
+      },
+      "revision": {
+        "window": "none"
+      },
+      "staleness": {
+        "follows": "effr"
+      },
+      "release": {
+        "basis": "rule",
+        "calendar": "nyfed-business-days"
+      },
+      "earliest": "2000-07-03"
+    },
+    {
+      "id": "debt-total",
+      "title": "Total public debt outstanding",
+      "short_title": "Total public debt",
+      "source": "fiscaldata",
+      "data_name": "Debt to the Penny",
+      "class": "administrative_daily",
+      "frequency": "business-day",
+      "unit": "usd",
+      "unit_label": "U.S. dollars",
+      "decimals": 2,
+      "seasonal_adjustment": "none",
+      "segment": "year",
+      "fetch": {
+        "endpoint": "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/debt_to_penny",
+        "format": "json",
+        "parameters": {
+          "filter": "record_date:gte:{start}",
+          "sort": "record_date",
+          "page[size]": "10000",
+          "page[number]": "{page}"
+        },
+        "shared_with": [
+          "debt-held-public",
+          "debt-intragov"
+        ]
+      },
+      "extract": [
+        {
+          "schema": "dtp-1993",
+          "from": "1993-04-01",
+          "to": null,
+          "value": "tot_pub_debt_out_amt",
+          "refuse_zero": true
+        }
+      ],
+      "known_inconsistencies": [
+        {
+          "period": "2011-02-01",
+          "text": "The published parts exceed the published total by $0.03."
+        },
+        {
+          "period": "2025-08-04",
+          "text": "The published parts exceed the published total by $10,000,000,000.00."
+        }
+      ],
+      "range": {
+        "min": "1.00",
+        "max": "1000000000000000.00"
+      },
+      "continuity": {
+        "max_gap": 6,
+        "unit": "days"
+      },
+      "revision": {
+        "window": "none"
+      },
+      "staleness": {
+        "after_business_days": 3
+      },
+      "release": {
+        "basis": "first-seen",
+        "calendar": "fiscaldata-release"
+      },
+      "earliest": "1993-04-01",
+      "known_gaps": [
+        {
+          "period": "1995-11-20",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1997-01-31",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1997-12-19",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1997-12-24",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1998-01-02",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1998-03-06",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1998-05-19",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1999-03-18",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1999-08-09",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1999-11-30",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2000-02-22",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2000-11-09",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-01-08",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-09-11",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-09-24",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-12-21",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2005-04-01",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2019-04-03",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        }
+      ]
+    },
+    {
+      "id": "debt-held-public",
+      "title": "Debt held by the public",
+      "short_title": "Debt held by the public",
+      "source": "fiscaldata",
+      "data_name": "Debt to the Penny",
+      "class": "administrative_daily",
+      "frequency": "business-day",
+      "unit": "usd",
+      "unit_label": "U.S. dollars",
+      "decimals": 2,
+      "seasonal_adjustment": "none",
+      "segment": "year",
+      "fetch": {
+        "endpoint": "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/debt_to_penny",
+        "format": "json",
+        "parameters": {
+          "filter": "record_date:gte:{start}",
+          "sort": "record_date",
+          "page[size]": "10000",
+          "page[number]": "{page}"
+        },
+        "shared_with": [
+          "debt-total",
+          "debt-intragov"
+        ]
+      },
+      "extract": [
+        {
+          "schema": "dtp-1993",
+          "from": "1993-04-01",
+          "to": null,
+          "value": "debt_held_public_amt",
+          "null_text": "null",
+          "missing_code": "not-published",
+          "refuse_zero": true
+        }
+      ],
+      "range": {
+        "min": "1.00",
+        "max": "1000000000000000.00"
+      },
+      "continuity": {
+        "max_gap": 6,
+        "unit": "days"
+      },
+      "revision": {
+        "window": "none"
+      },
+      "staleness": {
+        "after_business_days": 3
+      },
+      "release": {
+        "basis": "first-seen",
+        "calendar": "fiscaldata-release"
+      },
+      "earliest": "1997-09-30",
+      "known_gaps": [
+        {
+          "period": "1995-11-20",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1997-01-31",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1997-12-19",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1997-12-24",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1998-01-02",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1998-03-06",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1998-05-19",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1999-03-18",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1999-08-09",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1999-11-30",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2000-02-22",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2000-11-09",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-01-08",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-09-11",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-09-24",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-12-21",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2005-04-01",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2019-04-03",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        }
+      ]
+    },
+    {
+      "id": "debt-intragov",
+      "title": "Intragovernmental holdings",
+      "short_title": "Intragovernmental holdings",
+      "source": "fiscaldata",
+      "data_name": "Debt to the Penny",
+      "class": "administrative_daily",
+      "frequency": "business-day",
+      "unit": "usd",
+      "unit_label": "U.S. dollars",
+      "decimals": 2,
+      "seasonal_adjustment": "none",
+      "segment": "year",
+      "fetch": {
+        "endpoint": "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/debt_to_penny",
+        "format": "json",
+        "parameters": {
+          "filter": "record_date:gte:{start}",
+          "sort": "record_date",
+          "page[size]": "10000",
+          "page[number]": "{page}"
+        },
+        "shared_with": [
+          "debt-total",
+          "debt-held-public"
+        ]
+      },
+      "extract": [
+        {
+          "schema": "dtp-1993",
+          "from": "1993-04-01",
+          "to": null,
+          "value": "intragov_hold_amt",
+          "null_text": "null",
+          "missing_code": "not-published",
+          "refuse_zero": true
+        }
+      ],
+      "range": {
+        "min": "1.00",
+        "max": "1000000000000000.00"
+      },
+      "continuity": {
+        "max_gap": 6,
+        "unit": "days"
+      },
+      "revision": {
+        "window": "none"
+      },
+      "staleness": {
+        "after_business_days": 3
+      },
+      "release": {
+        "basis": "first-seen",
+        "calendar": "fiscaldata-release"
+      },
+      "earliest": "1997-09-30",
+      "known_gaps": [
+        {
+          "period": "1995-11-20",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1997-01-31",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1997-12-19",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1997-12-24",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1998-01-02",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1998-03-06",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1998-05-19",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1999-03-18",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1999-08-09",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "1999-11-30",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2000-02-22",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2000-11-09",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-01-08",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-09-11",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-09-24",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2001-12-21",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2005-04-01",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        },
+        {
+          "period": "2019-04-03",
+          "text": "A Federal Reserve business day with no Debt to the Penny record in the source (checked 2026-11-16)."
+        }
+      ]
+    },
+    {
+      "id": "m1-sa",
+      "title": "M1 money stock, seasonally adjusted",
+      "short_title": "M1 (SA)",
+      "source": "frb-releases",
+      "data_name": "H.6 Money Stock Measures",
+      "class": "revised_aggregate",
+      "frequency": "month",
+      "unit": "usd-billions",
+      "unit_label": "Billions of U.S. dollars, monthly average",
+      "decimals": 1,
+      "seasonal_adjustment": "sa",
+      "segment": "all",
+      "fetch": {
+        "endpoint": "https://www.federalreserve.gov/releases/h6/data/FRB_h6_xml.zip",
+        "format": "sdmx-zip",
+        "parameters": {},
+        "shared_with": [
+          "m2-sa",
+          "m1-nsa",
+          "m2-nsa"
+        ]
+      },
+      "extract": [
+        {
+          "schema": "h6-sdmx-2021",
+          "from": "1959-01",
+          "to": null,
+          "value": "OBS_VALUE",
+          "series_name": "M1.M",
+          "adjusted": "SA",
+          "unit": "Currency",
+          "unit_mult": "1e+09",
+          "missing_codes": [
+            "NA",
+            "ND",
+            "NC"
+          ]
+        }
+      ],
+      "range": {
+        "min": "0.0",
+        "max": "1000000.0"
+      },
+      "continuity": {
+        "max_gap": 1,
+        "unit": "months"
+      },
+      "revision": {
+        "window": "scheduled-release",
+        "alert_ratio": "0.05"
+      },
+      "staleness": {
+        "after_days_past_expected_release": 7
+      },
+      "release": {
+        "basis": "calendar",
+        "calendar": "frb-h6-release-dates"
+      },
+      "earliest": "1959-01"
+    },
+    {
+      "id": "m2-sa",
+      "title": "M2 money stock, seasonally adjusted",
+      "short_title": "M2 (SA)",
+      "source": "frb-releases",
+      "data_name": "H.6 Money Stock Measures",
+      "class": "revised_aggregate",
+      "frequency": "month",
+      "unit": "usd-billions",
+      "unit_label": "Billions of U.S. dollars, monthly average",
+      "decimals": 1,
+      "seasonal_adjustment": "sa",
+      "segment": "all",
+      "fetch": {
+        "endpoint": "https://www.federalreserve.gov/releases/h6/data/FRB_h6_xml.zip",
+        "format": "sdmx-zip",
+        "parameters": {},
+        "shared_with": [
+          "m1-sa",
+          "m1-nsa",
+          "m2-nsa"
+        ]
+      },
+      "extract": [
+        {
+          "schema": "h6-sdmx-2021",
+          "from": "1959-01",
+          "to": null,
+          "value": "OBS_VALUE",
+          "series_name": "M2.M",
+          "adjusted": "SA",
+          "unit": "Currency",
+          "unit_mult": "1e+09",
+          "missing_codes": [
+            "NA",
+            "ND",
+            "NC"
+          ]
+        }
+      ],
+      "range": {
+        "min": "0.0",
+        "max": "1000000.0"
+      },
+      "continuity": {
+        "max_gap": 1,
+        "unit": "months"
+      },
+      "revision": {
+        "window": "scheduled-release",
+        "alert_ratio": "0.05"
+      },
+      "staleness": {
+        "after_days_past_expected_release": 7
+      },
+      "release": {
+        "basis": "calendar",
+        "calendar": "frb-h6-release-dates"
+      },
+      "earliest": "1959-01"
+    },
+    {
+      "id": "m1-nsa",
+      "title": "M1 money stock, not seasonally adjusted",
+      "short_title": "M1 (NSA)",
+      "source": "frb-releases",
+      "data_name": "H.6 Money Stock Measures",
+      "class": "revised_aggregate",
+      "frequency": "month",
+      "unit": "usd-billions",
+      "unit_label": "Billions of U.S. dollars, monthly average",
+      "decimals": 1,
+      "seasonal_adjustment": "nsa",
+      "segment": "all",
+      "fetch": {
+        "endpoint": "https://www.federalreserve.gov/releases/h6/data/FRB_h6_xml.zip",
+        "format": "sdmx-zip",
+        "parameters": {},
+        "shared_with": [
+          "m1-sa",
+          "m2-sa",
+          "m2-nsa"
+        ]
+      },
+      "extract": [
+        {
+          "schema": "h6-sdmx-2021",
+          "from": "1959-01",
+          "to": null,
+          "value": "OBS_VALUE",
+          "series_name": "M1_N.M",
+          "adjusted": "NSA",
+          "unit": "Currency",
+          "unit_mult": "1e+09",
+          "missing_codes": [
+            "NA",
+            "ND",
+            "NC"
+          ]
+        }
+      ],
+      "range": {
+        "min": "0.0",
+        "max": "1000000.0"
+      },
+      "continuity": {
+        "max_gap": 1,
+        "unit": "months"
+      },
+      "revision": {
+        "window": "scheduled-release",
+        "alert_ratio": "0.05"
+      },
+      "staleness": {
+        "after_days_past_expected_release": 7
+      },
+      "release": {
+        "basis": "calendar",
+        "calendar": "frb-h6-release-dates"
+      },
+      "earliest": "1959-01"
+    },
+    {
+      "id": "m2-nsa",
+      "title": "M2 money stock, not seasonally adjusted",
+      "short_title": "M2 (NSA)",
+      "source": "frb-releases",
+      "data_name": "H.6 Money Stock Measures",
+      "class": "revised_aggregate",
+      "frequency": "month",
+      "unit": "usd-billions",
+      "unit_label": "Billions of U.S. dollars, monthly average",
+      "decimals": 1,
+      "seasonal_adjustment": "nsa",
+      "segment": "all",
+      "fetch": {
+        "endpoint": "https://www.federalreserve.gov/releases/h6/data/FRB_h6_xml.zip",
+        "format": "sdmx-zip",
+        "parameters": {},
+        "shared_with": [
+          "m1-sa",
+          "m2-sa",
+          "m1-nsa"
+        ]
+      },
+      "extract": [
+        {
+          "schema": "h6-sdmx-2021",
+          "from": "1959-01",
+          "to": null,
+          "value": "OBS_VALUE",
+          "series_name": "M2_N.M",
+          "adjusted": "NSA",
+          "unit": "Currency",
+          "unit_mult": "1e+09",
+          "missing_codes": [
+            "NA",
+            "ND",
+            "NC"
+          ]
+        }
+      ],
+      "range": {
+        "min": "0.0",
+        "max": "1000000.0"
+      },
+      "continuity": {
+        "max_gap": 1,
+        "unit": "months"
+      },
+      "revision": {
+        "window": "scheduled-release",
+        "alert_ratio": "0.05"
+      },
+      "staleness": {
+        "after_days_past_expected_release": 7
+      },
+      "release": {
+        "basis": "calendar",
+        "calendar": "frb-h6-release-dates"
+      },
+      "earliest": "1959-01"
+    }
+  ]
+}

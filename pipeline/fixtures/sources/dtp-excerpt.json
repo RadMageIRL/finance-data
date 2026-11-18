@@ -1,0 +1,123 @@
+{
+  "fixture": "Records copied unchanged (all values are strings) from the Fiscal Data API response saved 2026-11-16 (v2/accounting/od/debt_to_penny, page[size]=10000, 8,433 rows), chosen at the breakout null boundaries (including the month end 2003-01-31 without breakouts) and the two dates whose parts do not add up to the total.",
+  "attribution": "Source: U.S. Department of the Treasury, Bureau of the Fiscal Service, Debt to the Penny.",
+  "data": [
+    {
+      "record_date": "1993-04-01",
+      "debt_held_public_amt": "null",
+      "intragov_hold_amt": "null",
+      "tot_pub_debt_out_amt": "4225873987843.44",
+      "src_line_nbr": "1",
+      "record_fiscal_year": "1993",
+      "record_fiscal_quarter": "3",
+      "record_calendar_year": "1993",
+      "record_calendar_quarter": "2",
+      "record_calendar_month": "04",
+      "record_calendar_day": "01"
+    },
+    {
+      "record_date": "1997-09-29",
+      "debt_held_public_amt": "null",
+      "intragov_hold_amt": "null",
+      "tot_pub_debt_out_amt": "5388315809652.79",
+      "src_line_nbr": "1",
+      "record_fiscal_year": "1997",
+      "record_fiscal_quarter": "4",
+      "record_calendar_year": "1997",
+      "record_calendar_quarter": "3",
+      "record_calendar_month": "09",
+      "record_calendar_day": "29"
+    },
+    {
+      "record_date": "1997-09-30",
+      "debt_held_public_amt": "3789667546849.60",
+      "intragov_hold_amt": "1623478464547.74",
+      "tot_pub_debt_out_amt": "5413146011397.34",
+      "src_line_nbr": "1",
+      "record_fiscal_year": "1997",
+      "record_fiscal_quarter": "4",
+      "record_calendar_year": "1997",
+      "record_calendar_quarter": "3",
+      "record_calendar_month": "09",
+      "record_calendar_day": "30"
+    },
+    {
+      "record_date": "2003-01-31",
+      "debt_held_public_amt": "null",
+      "intragov_hold_amt": "null",
+      "tot_pub_debt_out_amt": "6401376662047.32",
+      "src_line_nbr": "1",
+      "record_fiscal_year": "2003",
+      "record_fiscal_quarter": "2",
+      "record_calendar_year": "2003",
+      "record_calendar_quarter": "1",
+      "record_calendar_month": "01",
+      "record_calendar_day": "31"
+    },
+    {
+      "record_date": "2005-03-30",
+      "debt_held_public_amt": "null",
+      "intragov_hold_amt": "null",
+      "tot_pub_debt_out_amt": "7786606686259.96",
+      "src_line_nbr": "1",
+      "record_fiscal_year": "2005",
+      "record_fiscal_quarter": "2",
+      "record_calendar_year": "2005",
+      "record_calendar_quarter": "1",
+      "record_calendar_month": "03",
+      "record_calendar_day": "30"
+    },
+    {
+      "record_date": "2005-03-31",
+      "debt_held_public_amt": "4572715640119.20",
+      "intragov_hold_amt": "3204223407550.94",
+      "tot_pub_debt_out_amt": "7776939047670.14",
+      "src_line_nbr": "1",
+      "record_fiscal_year": "2005",
+      "record_fiscal_quarter": "2",
+      "record_calendar_year": "2005",
+      "record_calendar_quarter": "1",
+      "record_calendar_month": "03",
+      "record_calendar_day": "31"
+    },
+    {
+      "record_date": "2011-02-01",
+      "debt_held_public_amt": "9482575172379.45",
+      "intragov_hold_amt": "4627267706524.08",
+      "tot_pub_debt_out_amt": "14109842878903.50",
+      "src_line_nbr": "1",
+      "record_fiscal_year": "2011",
+      "record_fiscal_quarter": "2",
+      "record_calendar_year": "2011",
+      "record_calendar_quarter": "1",
+      "record_calendar_month": "02",
+      "record_calendar_day": "01"
+    },
+    {
+      "record_date": "2025-08-04",
+      "debt_held_public_amt": "29523300148538.85",
+      "intragov_hold_amt": "7314864649375.46",
+      "tot_pub_debt_out_amt": "36828164797914.31",
+      "src_line_nbr": "1",
+      "record_fiscal_year": "2025",
+      "record_fiscal_quarter": "4",
+      "record_calendar_year": "2025",
+      "record_calendar_quarter": "3",
+      "record_calendar_month": "08",
+      "record_calendar_day": "04"
+    },
+    {
+      "record_date": "2026-11-12",
+      "debt_held_public_amt": "32824386143424.80",
+      "intragov_hold_amt": "7784120713478.45",
+      "tot_pub_debt_out_amt": "40608506856903.25",
+      "src_line_nbr": "1",
+      "record_fiscal_year": "2027",
+      "record_fiscal_quarter": "1",
+      "record_calendar_year": "2026",
+      "record_calendar_quarter": "4",
+      "record_calendar_month": "11",
+      "record_calendar_day": "12"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# Effective federal funds rate (Percent)
+# © 2026 Federal Reserve Bank of New York. Content from the New York Fed subject to the Terms of Use at newyorkfed.org.
+# The Effective Federal Funds Rate (EFFR) is subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for publication of the Effective Federal Funds Rate (EFFR) by RadMage Finance, does not sanction or endorse any particular republication, and has no liability for your use.
+# Terms: https://www.newyorkfed.org/termsofuse
+# Segment 2026: 2026-11-09 to 2026-11-12.
+# Retrieved 2026-11-16T14:17:00Z by RadMage Finance.
+period,value_percent,released,released_basis
+2026-11-09,3.88,2026-11-10,rule
+2026-11-10,3.88,2026-11-12,rule
+2026-11-12,3.88,2026-11-13,rule

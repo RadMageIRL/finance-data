@@ -1,0 +1,44 @@
+# Rehearses review authorization, rollback, restore and clearing a lock on deterministic
+# fixtures. The reviewer is the account that started this run, and its permission is read from
+# GitHub with the run's own token, exactly as the stage B review workflow will do. Nothing is
+# collected or published.
+name: rehearse
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: collector
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Read the triggering account's permission on this repository
+        id: permission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          permission="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${ACTOR}/permission" --jq .permission)"
+          echo "permission=${permission}" >> "$GITHUB_OUTPUT"
+          echo "The triggering account's permission: ${permission}"
+      - name: Rehearse on fixtures
+        env:
+          REVIEWER: ${{ github.triggering_actor }}
+          REVIEWER_PERMISSION: ${{ steps.permission.outputs.permission }}
+        run: node pipeline/bin/rehearse.mjs "$RUNNER_TEMP/rehearsal"
+      - name: Independent checker on the scenario root
+        run: python3 -I tests/datacheck/check_p22.py --root "$RUNNER_TEMP/rehearsal/scenario"

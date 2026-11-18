@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.snapshot/2",
+  "title": "The complete published state after one run, immutable (DATA_CONVENTIONS section 8)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "previous",
+    "created_at",
+    "run",
+    "series",
+    "revisions",
+    "holds",
+    "notices",
+    "frozen"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.snapshot/2"
+    },
+    "id": {
+      "$ref": "#/$defs/snapshotId"
+    },
+    "previous": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/snapshotId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "created_at": {
+      "$ref": "#/$defs/time"
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "attempt",
+        "trigger",
+        "collector_commit",
+        "registry_sha256"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "trigger": {
+          "enum": [
+            "schedule",
+            "manual",
+            "rollback",
+            "restore",
+            "review"
+          ]
+        },
+        "collector_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "registry_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "series": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z0-9]+(-[a-z0-9]+)*$": {
+          "$ref": "#/$defs/seriesState"
+        }
+      }
+    },
+    "revisions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fileRef"
+      }
+    },
+    "holds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "series",
+          "candidate",
+          "reason",
+          "opened_at"
+        ],
+        "properties": {
+          "series": {
+            "type": "string"
+          },
+          "candidate": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "archive_asset",
+              "sha256",
+              "bytes"
+            ],
+            "properties": {
+              "archive_asset": {
+                "type": "string",
+                "pattern": "^archive-\\d{4}-\\d{2}/[a-z0-9][a-z0-9._-]*$"
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "opened_at": {
+            "$ref": "#/$defs/time"
+          }
+        }
+      }
+    },
+    "notices": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "attribution",
+          "notice",
+          "terms_url"
+        ],
+        "properties": {
+          "attribution": {
+            "type": "string",
+            "minLength": 1
+          },
+          "notice": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "terms_url": {
+            "type": "string",
+            "pattern": "^https://"
+          }
+        }
+      }
+    },
+    "frozen": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "series",
+          "candidate_sha256",
+          "origin",
+          "frozen_at",
+          "reason"
+        ],
+        "properties": {
+          "series": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "candidate_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "origin": {
+            "enum": [
+              "rejected",
+              "rolled-back"
+            ]
+          },
+          "frozen_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "snapshotId": {
+      "type": "string",
+      "pattern": "^\\d{8}T\\d{6}Z$"
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9/._-]*\\.json$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "objectRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "segment",
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "segment": {
+          "type": "string",
+          "pattern": "^(\\d{4}|all)$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^objects/[a-z0-9-]+/(\\d{4}|all)/[0-9a-f]{16}\\.json$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "seriesState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objects",
+        "last_period",
+        "observation_count",
+        "status",
+        "retrieved_at",
+        "checked_at",
+        "attempt",
+        "source_marker"
+      ],
+      "properties": {
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/objectRef"
+          }
+        },
+        "last_period": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status": {
+          "enum": [
+            "refreshed",
+            "unchanged",
+            "carried-forward",
+            "held",
+            "not-yet-published"
+          ]
+        },
+        "retrieved_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checked_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attempt": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "at",
+            "outcome",
+            "error"
+          ],
+          "properties": {
+            "at": {
+              "$ref": "#/$defs/time"
+            },
+            "outcome": {
+              "enum": [
+                "ok",
+                "not-due",
+                "failed",
+                "invalid"
+              ]
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "source_marker": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
