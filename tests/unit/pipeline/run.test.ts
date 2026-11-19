@@ -87,7 +87,7 @@ describe('a first publication', () => {
     expect(r.fetch.calls.map((c: { group: string; full: boolean }) => [c.group, c.full])).toEqual([['effr', true], ['debt-total', true], ['m1-sa', true]]);
     const m = json(root, 'live/manifest.json');
     expect(Object.keys(m.series).length).toBe(9);
-    expect(m.health).toEqual({ schedule: ['17 * * * 1-5', '17 15 * * 0,6'], expected_next_update_by: '2026-11-16T20:00:00Z' });
+    expect(m.health).toEqual({ schedule: ['17 */4 * * *'], expected_next_update_by: '2026-11-16T20:00:00Z' });
     expect(m.series.effr).toMatchObject({ status: 'fresh', last_period: '2026-11-12', last_value: '3.88', last_released: { date: '2026-11-13', basis: 'rule' } });
     expect(m.series['fomc-target'].last_range).toEqual({ lower: '3.75', upper: '4.00' });
     // The attribution year is the ET year of retrieval (decision P5).

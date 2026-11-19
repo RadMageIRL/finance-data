@@ -6,7 +6,8 @@ import { addHours, etClock, etDate, nextFourthTuesdayAfter, zonedTime } from './
 import { keyOf } from './classify.mjs';
 
 const ET = 'America/New_York';
-export const SCHEDULE = ['17 * * * 1-5', '17 15 * * 0,6'];
+// v0.7 (14.2): every four hours at :17 UTC; it replaces the hourly and weekend lines of P8.
+export const SCHEDULE = ['17 */4 * * *'];
 export const PAGES_WINDOW_DAYS = 35;
 /** Fiscal Data's publication time when no calendar entry was collected (17.3). */
 export const FISCAL_DATA_TIME = '21:15';

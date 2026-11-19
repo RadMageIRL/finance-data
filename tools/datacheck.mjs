@@ -9,9 +9,10 @@
 // reason, and the step then also fails when that item unexpectedly passes.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { runScenario } from '../pipeline/bin/fixture-scenario.mjs';
+import { runStateScenario } from '../pipeline/bin/state-scenario.mjs';
 
 const OPEN = {};
 
@@ -38,10 +39,17 @@ const treeHash = (dir) => {
   walk(dir, '');
   return h.digest('hex');
 };
-const same = treeHash(root) === treeHash(twin);
+const rootHash = treeHash(root);
+const same = rootHash === treeHash(twin);
 rmSync(twin, { recursive: true, force: true });
 console.log(`data check: a second run of the scenario wrote ${same ? 'the same bytes' : 'DIFFERENT bytes'}`);
 if (!same) process.exit(1);
+// Cross-platform byte consistency (21.2, v0.7): the scenario's tree hash is committed, and the
+// same value must come out on Windows and on Linux. After a deliberate change to the pipeline's
+// output, write the new hash printed here into pipeline/fixtures/scenario-tree.sha256.
+const committed = readFileSync(join('pipeline', 'fixtures', 'scenario-tree.sha256'), 'utf8').trim().split(/\s+/)[0];
+console.log(`data check: scenario tree hash ${rootHash} ${rootHash === committed ? 'equals the committed one' : `DIFFERS from the committed ${committed}`}`);
+if (rootHash !== committed) process.exit(1);
 
 let run = null;
 for (const python of ['python', 'python3']) {
@@ -82,4 +90,38 @@ const summary = /^SELFTEST (\d+) PASS, (\d+) FAIL/m.exec(self.stdout ?? '');
 for (const line of `${self.stdout ?? ''}`.split(/\r?\n/)) if (line.startsWith('FAIL')) console.log(line);
 if (self.stderr) process.stdout.write(self.stderr);
 console.log(`data check: comparison self-test ${summary ? `${summary[1]} passed, ${summary[2]} failed` : 'reported nothing'}`);
-process.exit(self.status === 0 && summary && summary[2] === '0' && Number(summary[1]) > 0 ? 0 : 1);
+if (!(self.status === 0 && summary && summary[2] === '0' && Number(summary[1]) > 0)) process.exit(1);
+
+// The state store scenario (appendix G, v0.7), twice: the same bytes; then the independent
+// checker's scenario mode on it, which also runs the state mode on the final store.
+const stateDir = join('local', 'data-out', 'state-check');
+const stateTwin = join('local', 'data-out', 'state-check-twin');
+for (const d of [stateDir, stateTwin]) rmSync(d, { recursive: true, force: true });
+const g = await runStateScenario(stateDir);
+await runStateScenario(stateTwin);
+const stateSame = treeHash(stateDir) === treeHash(stateTwin);
+rmSync(stateTwin, { recursive: true, force: true });
+console.log(`data check: state scenario wrote ${stateDir} (${g.steps.length} steps: ${g.steps.map((s) => s.outcome).join(', ')}); a second run wrote ${stateSame ? 'the same bytes' : 'DIFFERENT bytes'}`);
+if (!stateSame) process.exit(1);
+const sc = spawnSync(run.python, ['-I', join('tests', 'datacheck', 'check_p22.py'), '--state-scenario', stateDir], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const scCount = /^SUMMARY (\d+) PASS, (\d+) FAIL, (\d+) SKIP$/m.exec(sc.stdout ?? '');
+for (const line of `${sc.stdout ?? ''}`.split(/\r?\n/)) if (line.startsWith('FAIL')) console.log(line);
+if (sc.stderr) process.stdout.write(sc.stderr);
+console.log(`data check: state scenario check ${scCount ? `${scCount[1]} passed, ${scCount[2]} failed, ${scCount[3]} skipped` : 'reported nothing'}`);
+if (!(sc.status === 0 && scCount && scCount[2] === '0' && Number(scCount[1]) > 0)) process.exit(1);
+
+// The checker's own self-test of the state and scenario modes, where its local evidence exists
+// (it builds on the saved copy of the real Stage B store, which only the Finance checkout has).
+const evidence = join('local', 'research', 'p26', 'live', 'state-store');
+if (!existsSync(evidence)) {
+  console.log('data check: state self-test not run here (the saved Stage B store is local evidence)');
+  process.exit(0);
+}
+const stOut = join('local', 'data-out', 'state-selftest');
+rmSync(stOut, { recursive: true, force: true });
+const st = spawnSync(run.python, ['-I', join('tests', 'datacheck', 'state_selftest.py'), stOut], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const stCount = /^SELFTEST (\d+) PASS, (\d+) FAIL/m.exec(st.stdout ?? '');
+for (const line of `${st.stdout ?? ''}`.split(/\r?\n/)) if (line.startsWith('FAIL')) console.log(line);
+if (st.stderr) process.stdout.write(st.stderr);
+console.log(`data check: state self-test ${stCount ? `${stCount[1]} passed, ${stCount[2]} failed` : 'reported nothing'}`);
+process.exit(st.status === 0 && stCount && stCount[2] === '0' && Number(stCount[1]) > 0 ? 0 : 1);

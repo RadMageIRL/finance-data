@@ -24,7 +24,7 @@ const keys = (input: ReturnType<typeof healthy>) => scheduleHealth(input).map((f
 describe('schedule health', () => {
   it('finds nothing when the workflow is active, recent, succeeding and the manifest is on time', () => {
     expect(scheduleHealth(healthy())).toEqual([]);
-    expect(DEFAULT_THRESHOLDS).toEqual({ inactivityWarningDays: 45, inactivityCriticalDays: 55, runGapWarningHours: 26, runGapCriticalHours: 50, consecutiveFailures: 3, overdueCriticalHours: 24 });
+    expect(DEFAULT_THRESHOLDS).toEqual({ inactivityWarningDays: 45, inactivityCriticalDays: 55, runGapWarningHours: 9, runGapCriticalHours: 26, consecutiveFailures: 3, overdueCriticalHours: 24 });
   });
 
   it('reports a disabled workflow at once, whatever the reason', () => {
@@ -56,18 +56,19 @@ describe('schedule health', () => {
       i.runs = [...extra, { event: 'schedule', conclusion: 'success', created_at: hoursAgo(hours) }];
       return keys(i);
     };
-    expect(gap(26)).toEqual([]);
-    expect(gap(26.5)).toEqual(['warning scheduled-run-gap']);
-    expect(gap(50)).toEqual(['warning scheduled-run-gap']);
-    expect(gap(50.5)).toEqual(['critical scheduled-run-gap']);
+    // v0.7 (14.3): the four-hour schedule warns after 9 hours and is critical after 26.
+    expect(gap(9)).toEqual([]);
+    expect(gap(9.5)).toEqual(['warning scheduled-run-gap']);
+    expect(gap(26)).toEqual(['warning scheduled-run-gap']);
+    expect(gap(26.5)).toEqual(['critical scheduled-run-gap']);
     // A recent successful manual run does not hide a schedule that stopped.
-    expect(gap(30, [{ event: 'workflow_dispatch', conclusion: 'success', created_at: hoursAgo(1) }])).toEqual(['warning scheduled-run-gap']);
+    expect(gap(12, [{ event: 'workflow_dispatch', conclusion: 'success', created_at: hoursAgo(1) }])).toEqual(['warning scheduled-run-gap']);
   });
 
   it('with no successful scheduled run, measures from the oldest run listed, and flags an empty list', () => {
     const i = healthy();
-    i.runs = [{ event: 'schedule', conclusion: 'cancelled', created_at: hoursAgo(1) }, { event: 'schedule', conclusion: 'cancelled', created_at: hoursAgo(30) }];
-    expect(scheduleHealth(i)).toEqual([{ key: 'scheduled-run-gap', severity: 'warning', message: '30 hours with no successful scheduled run listed.' }]);
+    i.runs = [{ event: 'schedule', conclusion: 'cancelled', created_at: hoursAgo(1) }, { event: 'schedule', conclusion: 'cancelled', created_at: hoursAgo(12) }];
+    expect(scheduleHealth(i)).toEqual([{ key: 'scheduled-run-gap', severity: 'warning', message: '12 hours with no successful scheduled run listed.' }]);
     i.runs = [];
     expect(keys(i)).toEqual(['critical scheduled-run-gap']);
   });
@@ -75,7 +76,7 @@ describe('schedule health', () => {
   it('counts consecutive failures from the newest run, stopping at a success and skipping cancelled runs', () => {
     const runs = (conclusions: string[]) => {
       const i = healthy();
-      i.runs = [...conclusions.map((c, k) => ({ event: 'schedule', conclusion: c, created_at: hoursAgo(k + 1) })), { event: 'schedule', conclusion: 'success', created_at: hoursAgo(10) }];
+      i.runs = [...conclusions.map((c, k) => ({ event: 'schedule', conclusion: c, created_at: hoursAgo(k + 1) })), { event: 'schedule', conclusion: 'success', created_at: hoursAgo(5) }];
       return keys(i);
     };
     expect(runs(['failure', 'failure'])).toEqual([]);

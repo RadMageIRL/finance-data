@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.collection/1",
+  "title": "One collection record per run that wrote the state store (DATA_CONVENTIONS 21.4)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run",
+    "trigger",
+    "operation",
+    "started_at",
+    "ended_at",
+    "outcome",
+    "requests",
+    "validation",
+    "accepted",
+    "freshness",
+    "expected_next_update_by",
+    "added",
+    "month_added_bytes"
+  ],
+  "$defs": {
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "host",
+        "url",
+        "requested_at",
+        "status",
+        "content_type",
+        "content_length",
+        "etag",
+        "last_modified",
+        "date",
+        "bytes",
+        "sha256"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "host": {
+          "type": "string",
+          "pattern": "^[a-z0-9.-]+$"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "requested_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "content_type": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "content_length": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "etag": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "last_modified": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "date": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.collection/1"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,80}$"
+    },
+    "trigger": {
+      "enum": [
+        "schedule",
+        "manual",
+        "operation"
+      ]
+    },
+    "operation": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "enum": [
+            "promote",
+            "review",
+            "rollback",
+            "restore"
+          ]
+        }
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "ended_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "outcome": {
+      "enum": [
+        "published",
+        "nothing-due",
+        "no-change",
+        "gate-failed",
+        "failed",
+        "refused",
+        "promoted"
+      ]
+    },
+    "requests": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/response"
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checker",
+        "state"
+      ],
+      "properties": {
+        "checker": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "pass",
+            "fail",
+            "skip"
+          ],
+          "properties": {
+            "mode": {
+              "const": "live"
+            },
+            "pass": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "fail": {
+              "const": 0
+            },
+            "skip": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "state": {
+          "const": "ok"
+        }
+      }
+    },
+    "accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshot",
+        "manifest_sha256"
+      ],
+      "properties": {
+        "snapshot": {
+          "type": "string",
+          "pattern": "^\\d{8}T\\d{6}Z$"
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "freshness": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "series",
+          "status",
+          "last_period",
+          "deadline"
+        ],
+        "properties": {
+          "series": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "status": {
+            "enum": [
+              "fresh",
+              "stale",
+              "held",
+              "frozen",
+              "not-yet-published"
+            ]
+          },
+          "last_period": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "expected_next_update_by": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "added": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "bytes"
+      ],
+      "properties": {
+        "files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "month_added_bytes": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

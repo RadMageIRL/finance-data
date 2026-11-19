@@ -1,15 +1,19 @@
-# The collector (DATA_CONVENTIONS 20). Manual only: there is no schedule. Fixture mode runs the
-# deterministic scenario. Live mode is one nonpublishing collection (Stage B): it runs only when the
-# repository variable LIVE_COLLECTION_AUTHORIZED is "true" and the person starting it types LIVE; it
-# writes only to the private state repository, through a token minted for that repository alone.
-# Nothing is published: no Pages, no release, no Labs route.
+# The collector (DATA_CONVENTIONS 21.3, Stage C): scheduled private collection every four hours
+# at :17 UTC, and manual runs. Fixture mode runs the deterministic scenario. Live mode collects
+# into the private state repository only, through a token minted for that repository alone, after
+# the independent checker has validated the result. A scheduled run collects only while the
+# repository variables LIVE_COLLECTION_AUTHORIZED and COLLECTION_SCHEDULE_ENABLED are both "true";
+# otherwise its job is skipped. A manual live run needs LIVE_COLLECTION_AUTHORIZED and the typed
+# confirmation LIVE. Nothing is published: no Pages, no release, no Labs route.
 name: collect
 
 on:
+  schedule:
+    - cron: '17 */4 * * *'
   workflow_dispatch:
     inputs:
       mode:
-        description: fixture, or live (one nonpublishing collection)
+        description: fixture, or live (one private collection)
         type: choice
         options: [fixture, live]
         default: fixture
@@ -25,7 +29,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  collect:
+  fixture:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'fixture'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -37,30 +42,47 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-
-      - name: A live run without the authorization is refused
-        if: inputs.mode == 'fixture'
+      - name: A live run without a promoted state store is refused
         run: |
-          if node pipeline/bin/collect.mjs --mode live --root "$RUNNER_TEMP/live-root"; then
+          mkdir -p "$RUNNER_TEMP/empty-store"
+          if node pipeline/bin/collect.mjs --mode live --root "$RUNNER_TEMP/live-root" --state "$RUNNER_TEMP/empty-store" --run refused-check --trigger manual; then
             echo "a live run was not refused"
             exit 1
           fi
       - name: Collect from fixtures
-        if: inputs.mode == 'fixture'
         run: node pipeline/bin/collect.mjs --mode fixture --root "$RUNNER_TEMP/fixture-root"
 
-      - name: Refuse a live run that is not authorized and confirmed
-        if: inputs.mode == 'live'
+  collect:
+    if: >-
+      (github.event_name == 'schedule' && vars.LIVE_COLLECTION_AUTHORIZED == 'true' && vars.COLLECTION_SCHEDULE_ENABLED == 'true') ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'live')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      wrote: ${{ steps.collect.outputs.wrote }}
+      ledger: ${{ steps.collect.outputs.ledger }}
+      stage: ${{ steps.collect.outputs.stage }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Refuse a run that is not authorized
         env:
+          EVENT: ${{ github.event_name }}
           AUTHORIZED: ${{ vars.LIVE_COLLECTION_AUTHORIZED }}
+          ENABLED: ${{ vars.COLLECTION_SCHEDULE_ENABLED }}
           CONFIRM: ${{ inputs.confirm }}
         run: |
-          if [ "$AUTHORIZED" != "true" ] || [ "$CONFIRM" != "LIVE" ]; then
-            echo "live collection is not authorized and confirmed"
-            exit 1
-          fi
+          if [ "$AUTHORIZED" != "true" ]; then echo "live collection is not authorized"; exit 1; fi
+          if [ "$EVENT" = "schedule" ] && [ "$ENABLED" != "true" ]; then echo "scheduled collection is not enabled"; exit 1; fi
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$CONFIRM" != "LIVE" ]; then echo "a manual live run needs the confirmation LIVE"; exit 1; fi
       - name: Mint a token for the state store only
-        if: inputs.mode == 'live'
         id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -69,33 +91,25 @@ jobs:
           owner: RadMageIRL
           repositories: finance-data-state
           permission-contents: write
-      - name: Check out the state store (a store with no commit yet is a fresh store)
-        if: inputs.mode == 'live'
+      - name: Check out the state store (Stage C refuses a store with no commit)
         env:
           TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          # actions/checkout cannot fetch a repository that has no commit yet, so the state store is
-          # read with git directly: the head of main at depth 1, or nothing at all when the store has
-          # no ref yet (DATA_CONVENTIONS 20.3: no state/ is a fresh store). Refs without main, or a
-          # failure to read the store, stop the run before any request is made.
           basic="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
           echo "::add-mask::${basic}"
           git init -q -b main state-store
           git -C state-store remote add origin https://github.com/RadMageIRL/finance-data-state.git
           git -C state-store config http.https://github.com/.extraheader "AUTHORIZATION: basic ${basic}"
           refs="$(git -C state-store ls-remote origin)"
-          if [ -z "$refs" ]; then
-            echo "the state store has no commit yet: a fresh store"
-          elif printf '%s\n' "$refs" | awk '$2 == "refs/heads/main" { found = 1 } END { exit !found }'; then
+          if printf '%s\n' "$refs" | awk '$2 == "refs/heads/main" { found = 1 } END { exit !found }'; then
             git -C state-store fetch -q --depth 1 origin main
             git -C state-store checkout -q -B main FETCH_HEAD
             echo "state store at $(git -C state-store rev-parse HEAD)"
           else
-            echo "the state store has refs but no main branch"
+            echo "the state store has no main branch; Stage C does not start from an empty store"
             exit 1
           fi
       - name: Commit identity of the app
-        if: inputs.mode == 'live'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           SLUG: ${{ steps.app.outputs.app-slug }}
@@ -103,29 +117,73 @@ jobs:
           id="$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)"
           git -C state-store config user.name "${SLUG}[bot]"
           git -C state-store config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
-      - name: Collect (live, nonpublishing), then write the state store without force
-        if: inputs.mode == 'live'
+      - name: Self-check facts (this workflow's state and runs, the repository's last push)
+        id: facts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/collect.yml" --jq .state)"
+          runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/collect.yml/runs?per_page=30" --jq '[.workflow_runs[] | {event, conclusion, created_at}]')"
+          pushed="$(gh api "repos/${GITHUB_REPOSITORY}" --jq .pushed_at)"
+          set -e
+          if [ -n "$state" ] && [ -n "$runs" ] && [ -n "$pushed" ]; then
+            printf '{"workflow":{"state":"%s"},"repository":{"pushed_at":"%s"},"runs":%s}\n' "$state" "$pushed" "$runs" > "$RUNNER_TEMP/facts.json"
+            echo "args=--facts $RUNNER_TEMP/facts.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=--facts-unavailable" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Collect, validate with the independent checker, then write the state store without force
+        id: collect
         env:
           LIVE_COLLECTION_AUTHORIZED: ${{ vars.LIVE_COLLECTION_AUTHORIZED }}
-          RUN: live-${{ github.run_id }}-${{ github.run_attempt }}
-        run: >-
-          node pipeline/bin/collect.mjs --mode live --root "$RUNNER_TEMP/root"
-          --responses "$RUNNER_TEMP/responses" --state state-store --run "$RUN" --push
-      - name: Independent comparison with the saved histories, kept in the state store
-        if: inputs.mode == 'live'
-        env:
-          RUN: live-${{ github.run_id }}-${{ github.run_attempt }}
+          EVENT: ${{ github.event_name }}
+          FACTS: ${{ steps.facts.outputs.args }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
         run: |
-          # The checker writes outside the collection folder it reads; its exit code is kept and
-          # returned after the result is stored (0 everything compared, 1 something refused).
+          if [ "$EVENT" = "schedule" ]; then trigger=schedule; run="sched-${RUN_ID}-${ATTEMPT}"; else trigger=manual; run="live-${RUN_ID}-${ATTEMPT}"; fi
+          echo "stage=collection" >> "$GITHUB_OUTPUT"
           set +e
-          python3 -I tests/datacheck/check_p22.py --compare-saved "state-store/unpublished/$RUN" --compare-out "$RUNNER_TEMP/comparison.json" > "$RUNNER_TEMP/comparison.txt" 2>&1
+          # shellcheck disable=SC2086
+          node pipeline/bin/collect.mjs --mode live --root "$RUNNER_TEMP/root" --state state-store --run "$run" --trigger "$trigger" $FACTS --summary "$RUNNER_TEMP/summary.json" --push
           code=$?
           set -e
-          cat "$RUNNER_TEMP/comparison.txt"
-          cp "$RUNNER_TEMP/comparison.txt" "state-store/unpublished/$RUN/comparison.txt"
-          if [ -f "$RUNNER_TEMP/comparison.json" ]; then cp "$RUNNER_TEMP/comparison.json" "state-store/unpublished/$RUN/comparison.json"; fi
-          git -C state-store add -A
-          git -C state-store commit -q -m "Stage B collection $RUN: independent comparison (checker exit $code)"
-          git -C state-store push -q origin HEAD:main
+          if [ -f "$RUNNER_TEMP/summary.json" ]; then
+            echo "wrote=true" >> "$GITHUB_OUTPUT"
+            echo "ledger=$(node -e "const s=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));process.stdout.write(Buffer.from(JSON.stringify({ledger:s.ledger})).toString('base64'))" "$RUNNER_TEMP/summary.json")" >> "$GITHUB_OUTPUT"
+            node -e "const s=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));const t=['| Field | Value |','|---|---|',...['outcome','run','commit'].map((k)=>'| '+k+' | '+s[k]+' |'),'| accepted | '+s.accepted.snapshot+' '+s.accepted.manifest_sha256+' |','| requests | '+s.requests.map((r)=>r.host+' '+r.status).join(', ')+' |','| added | '+s.added.files+' files, '+s.added.bytes+' bytes |','| alerts | '+s.ledger.map((a)=>a.key).join(', ')+' |'];process.stdout.write(t.join('\n')+'\n')" "$RUNNER_TEMP/summary.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
           exit "$code"
+
+  issues:
+    needs: collect
+    if: always() && needs.collect.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Reconcile the alert issues with the ledger the run wrote
+        if: needs.collect.outputs.wrote == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LEDGER: ${{ needs.collect.outputs.ledger }}
+        run: |
+          printf '%s' "$LEDGER" | base64 -d > "$RUNNER_TEMP/ledger.json"
+          node pipeline/bin/issues.mjs --summary "$RUNNER_TEMP/ledger.json"
+      - name: Keep one collect-failed issue open (the store was not written)
+        if: needs.collect.outputs.wrote != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STAGE: ${{ needs.collect.outputs.stage || 'setup' }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: node pipeline/bin/issues.mjs --failed "$STAGE" --run "${RUN_ID}-${ATTEMPT}"

@@ -1,4 +1,4 @@
-"""Self-test of the comparison mode (compare_saved.py, DATA_CONVENTIONS v0.6 section 20.4).
+"""Self-test of the comparison mode (compare_saved.py, DATA_CONVENTIONS v0.7 sections 20.2 and 20.4).
 
     python -I tests/datacheck/compare_selftest.py <empty or new output dir>
 
@@ -16,6 +16,9 @@ and checks that it reports exactly those edits and nothing else:
   tampered  a response whose bytes no longer match its recorded SHA-256: refused, not compared
   doctype   an H.6 XML with a document type and an entity declaration: refused
   status    a Debt to the Penny page answered 404 and an EFFR answer 301: reported, not compared
+  padded    the Stage B file names 001-<host>: read and compared
+  record-*  twelve invalid records (a field missing or extra, a wrong type, n or host not the file
+            name's, a local time): each refused, not compared (20.2 v0.7, F1)
 
 Standard library only. Writes only under the output folder.
 """
@@ -61,15 +64,21 @@ def dumps(v):
     return json.dumps(v, ensure_ascii=False)
 
 
-def write_response(folder, n, url, body, status=200, content_type="application/json"):
+def write_response(folder, n, url, body, status=200, content_type="application/json", edit=None, pad=False):
+    """A response as 20.2 (v0.7) saves it: the body and a record of exactly the twelve fields.
+    `edit` changes the record after it is built (the invalid-record variants); `pad` names the
+    files 001-<host> as the Stage B transport did."""
     host = re.match(r"https://([^/]+)/", url).group(1)
     rdir = folder / "responses"
     rdir.mkdir(parents=True, exist_ok=True)
-    (rdir / f"{n}-{host}.bin").write_bytes(body)
-    rec = {"url": url, "requested_at": f"2026-11-19T15:00:0{n}Z", "status": status, "content_type": content_type, "content_length": str(len(body)),
-           "etag": None, "last_modified": "Thu, 19 Nov 2026 14:00:00 GMT", "date": f"Thu, 19 Nov 2026 15:00:0{n} GMT", "bytes": len(body),
-           "sha256": hashlib.sha256(body).hexdigest()}
-    (rdir / f"{n}-{host}.json").write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8", newline="\n")
+    stem = f"{n:03d}-{host}" if pad else f"{n}-{host}"
+    (rdir / f"{stem}.bin").write_bytes(body)
+    rec = {"n": n, "host": host, "url": url, "requested_at": f"2026-11-19T15:00:0{n}Z", "status": status, "content_type": content_type,
+           "content_length": str(len(body)), "etag": None, "last_modified": "Thu, 19 Nov 2026 14:00:00 GMT", "date": f"Thu, 19 Nov 2026 15:00:0{n} GMT",
+           "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()}
+    if edit:
+        edit(rec)
+    (rdir / f"{stem}.json").write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
 def saved_effr():
@@ -192,7 +201,31 @@ def build(out):
     f = out / "status"
     write_response(f, 1, EFFR_URL, b"", status=301, content_type="text/html")
     write_response(f, 2, DTP_URL.format(page=1), b'{"error":"not found"}', status=404)
+    # padded: the identity collection with the Stage B file names 001-<host> (reading: <n> may be zero-padded)
+    f = out / "padded"
+    write_response(f, 1, EFFR_URL, gzip.decompress((FIX / "nyfed-effr-full.json.gz").read_bytes()), pad=True)
+    write_response(f, 4, DATES_URL, dates_bytes, pad=True)
+    # invalid records (20.2 v0.7, F1): each refused, never compared
+    effr_bytes = gzip.decompress((FIX / "nyfed-effr-full.json.gz").read_bytes())
+    for name, edit in RECORD_FAULTS:
+        write_response(out / f"record-{name}", 1, EFFR_URL, effr_bytes, edit=edit)
     return out
+
+
+RECORD_FAULTS = [
+    ("missing-etag", lambda r: r.pop("etag")),
+    ("missing-n", lambda r: r.pop("n")),
+    ("missing-host", lambda r: r.pop("host")),
+    ("extra-base", lambda r: r.update(base="001-markets.newyorkfed.org")),
+    ("status-text", lambda r: r.update(status="200")),
+    ("bytes-text", lambda r: r.update(bytes=str(r["bytes"]))),
+    ("n-fraction", lambda r: r.update(n=1.0)),
+    ("content-length-number", lambda r: r.update(content_length=int(r["content_length"]))),
+    ("etag-number", lambda r: r.update(etag=5)),
+    ("n-not-file", lambda r: r.update(n=2)),
+    ("host-not-file", lambda r: r.update(host="api.fiscaldata.treasury.gov")),
+    ("requested-at-local", lambda r: r.update(requested_at="2026-11-19 10:00:01")),
+]
 
 
 def run_variant(out, name):
@@ -296,6 +329,16 @@ def main(argv):
     st = sorted((f["source"], f.get("live")) for f in res["findings"] if f["kind"] == "request" and f.get("field") == "status")
     expect("status: a 404 page and a 301 redirect are reported with their status and not compared", st == [("fiscaldata", "404"), ("nyfed-markets", "301")]
            and res["sources"]["fiscaldata"]["summary"] is None, st)
+
+    code, res, _ = run_variant(out, "padded")
+    expect("padded: Stage B file names 001-<host> with twelve-field records are read and compared, exit 0",
+           code == 0 and [r["integrity"] for r in res["responses"]] == ["ok", "ok"] and not diffs(res), [r["integrity"] for r in res["responses"]])
+
+    for name, _ in RECORD_FAULTS:
+        code, res, _ = run_variant(out, f"record-{name}")
+        expect(f"record-{name}: the record is invalid (20.2 v0.7: exactly the twelve fields with their types), the response refused and not compared, exit 1",
+               code == 1 and [r["integrity"] for r in res["responses"]] == ["record invalid"] and res["sources"]["nyfed-markets"]["summary"] is None
+               and any(f["kind"] == "integrity" and f.get("field") == "record" for f in res["findings"]), [r["integrity"] for r in res["responses"]])
 
     lines = []
     code = CS.run(out / "main", out / "main" / "inside.json", ROOT, emit=lines.append)

@@ -7,8 +7,9 @@
 export const DEFAULT_THRESHOLDS = {
   inactivityWarningDays: 45,
   inactivityCriticalDays: 55,
-  runGapWarningHours: 26,
-  runGapCriticalHours: 50,
+  // v0.7 (14.3): two missed four-hour runs and an hour of delay; critical after a day and two hours.
+  runGapWarningHours: 9,
+  runGapCriticalHours: 26,
   consecutiveFailures: 3,
   overdueCriticalHours: 24,
 };

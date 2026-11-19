@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent checker for docs/DATA_CONVENTIONS.md v0.6 (RadMage Finance, P2.2 to P2.5, Stage B).
+"""Independent checker for docs/DATA_CONVENTIONS.md v0.7 (RadMage Finance, P2.2 to P2.6, Stages B and C).
 
 Written from the spec text, pipeline/schemas/, pipeline/registry/econ.json,
 pipeline/fixtures/ and the saved provider responses and pages under local/research/
@@ -25,15 +25,42 @@ rollback records in archive/rollbacks/ (T115, T31, T34, T35), review-queue/4 wit
 per lock (T69, T109), the state descriptor (S5), the changed rows 16, 18 and 20 of appendix B
 (T84, T114), and the comparison mode of section 20.4 (compare_saved.py beside this file).
 
+v0.7 additions (appendix F): the four-hour schedule and the run-gap thresholds (C7, T19, T55),
+the weekly full fetch once per group per Sunday and collector.json full_fetches (C8, T100,
+T102, T116), the twelve response record fields (C9, S6, compare_saved.py), the new schemas
+state/2, accepted/1 and collection/1 (S6), the conventions value (R2), LF only and the "line
+endings converted" diagnosis (T117), the alert keys of 17.8 (T118), the live root mode of 21.3,
+the state store mode (20.3, 21.1, 21.2, 21.4) and the appendix G scenario mode (check_state.py
+beside this file).
+
 Run from the repository root:
 
     python -I tests/datacheck/check_p22.py
-    python -I tests/datacheck/check_p22.py --root <dir>
+    python -I tests/datacheck/check_p22.py --root <dir> [--live]
+    python -I tests/datacheck/check_p22.py --state <store dir>
+    python -I tests/datacheck/check_p22.py --state-scenario <dir>
     python -I tests/datacheck/check_p22.py --compare-saved <collection dir> [--compare-out <file.json>]
 
 With --root the pipeline root <dir> (section 17.1: live/, archive/files/,
 archive/manifests/, archive/holds/, archive/state/) is verified in addition to the
 checks above; those checks have ids T30 and up.
+
+With --root <dir> --live (21.3) the root is a live root, not the scenario: every root check
+runs except the four that follow the table of appendix B (T84, T103, T104, T114), and of the
+plain checks only those the root checks rest on (the C self-tests, the S schema checks other
+than S1 on the example tree, the R registry checks and the H holiday checks); the example
+tree (T1 to T29), the collector fixtures (SR), the source fixtures and the saved evidence (F)
+are not read. 21.1 (v0.7, F10): when the root's archive/state/ holds accepted.json (a working
+root, 21.3), the manifests and snapshots whose time is not after the promoted snapshot's, and
+collector.json until a v0.7 run rewrites it, are read by exactly three v0.6 rules: T46 (the
+registry hash with conventions v0.6), T55 (the v0.6 cron lines) and T116 (no full_fetches).
+Without accepted.json every rule is strict.
+
+With --state <store dir> the private state store is verified: the Stage B layout of 20.3
+(STATE.json rmf.econ.state/1) or the v0.7 layout of 21.1, 21.2 and 21.4 (rmf.econ.state/2),
+including its root in live mode. With --state-scenario <dir>, <dir>/steps.json and
+<dir>/store are checked against appendix G, then the store in state mode. These checks have
+ids ST1 and up, and G0 and up.
 
 Prints one line per check: PASS, FAIL with a reason, or SKIP when a saved raw file is
 absent (local/ is not committed). Exits non-zero if any check fails.
@@ -116,12 +143,26 @@ SAFE_INT = 2 ** 53 - 1
 
 COUNTS = {"PASS": 0, "FAIL": 0, "SKIP": 0}
 ROOT_MODE = False  # set by --root
-CONVENTIONS = "v0.6"  # 4.1: the version of the text the registry was written for
-REGISTRY_SCHEMA = "rmf.econ.registry/4"  # 4.1 (v0.6, appendix E8)
-SCHEMA_IDS = {  # 8, 9, 14.1, 17.5, 4.1, 20.3 (v0.6, appendix E8)
+LIVE_MODE = False  # set by --live, --state and --state-scenario (21.3: a live root is not the scenario)
+CONVENTIONS = "v0.7"  # 4.1: the version of the text the registry was written for (v0.7, appendix F9)
+LEGACY_CONVENTIONS = "v0.6"  # the version a Stage B root was written under (see LEGACY in section_root)
+REGISTRY_SCHEMA = "rmf.econ.registry/4"  # 4.1 (v0.6, appendix E8; unchanged in v0.7)
+SCHEMA_IDS = {  # 8, 9, 14.1, 17.5, 4.1, 20.3, 21.1, 21.2, 21.4 (v0.7, appendix F9)
     "registry": "rmf.econ.registry/4", "snapshot": "rmf.econ.snapshot/2", "manifest": "rmf.econ.manifest/3",
     "runs": "rmf.econ.runs/2", "review": "rmf.econ.review/3", "review-queue": "rmf.econ.review-queue/4",
-    "rollback": "rmf.econ.rollback/1", "state": "rmf.econ.state/1"}
+    "rollback": "rmf.econ.rollback/1", "state": "rmf.econ.state/1",
+    "state-v2": "rmf.econ.state/2", "accepted": "rmf.econ.accepted/1", "collection": "rmf.econ.collection/1"}
+# v0.7 (appendix F)
+SCHEDULE_LINES = ["17 */4 * * *"]  # 14.2, 21.3 (F7): the one cron line in force for Stage C
+SCHEDULE_LINES_V06 = ["17 * * * 1-5", "17 15 * * 0,6"]  # decision P8, in force before v0.7
+SCHEDULE_UTC_TIMES = ("00:17", "04:17", "08:17", "12:17", "16:17", "20:17")  # 14.2 lists them
+RUN_GAP_WARNING_HOURS, RUN_GAP_CRITICAL_HOURS = 9, 26  # 14.3 (F7): it was 26 and 50
+GITATTRIBUTES = b"* -text\n"  # 21.2: exactly these 8 bytes
+RESPONSE_FIELDS = ("n", "host", "url", "requested_at", "status", "content_type", "content_length", "etag",
+                   "last_modified", "date", "bytes", "sha256")  # 20.2 (F1): exactly twelve, each always present
+RESPONSE_INT_FIELDS = ("n", "status", "bytes")  # 20.2: integers; the others text
+RESPONSE_HEADER_FIELDS = ("content_type", "content_length", "etag", "last_modified", "date")  # text or null
+STATE_BUDGET_WARNING, STATE_BUDGET_CRITICAL = 50_000_000, 100_000_000  # 21.4
 FD_DEFAULT_TIME = "21:15"  # 17.3: Fiscal Data's time when no calendar entry has been collected (zone unknown, 4.5)
 REVIEW_PERMISSIONS_ALL = ("admin", "maintain", "write", "triage", "read", "none")  # 11.5
 # 17.5 (v0.5): the refusal rules, each list in the order it is checked.
@@ -279,7 +320,7 @@ def sha256_hex(b):
 SUPPORTED_KEYWORDS = {
     "type", "const", "enum", "pattern", "minLength", "maxLength", "minimum", "maximum",
     "required", "properties", "patternProperties", "additionalProperties", "minProperties",
-    "items", "minItems", "maxItems", "anyOf", "oneOf", "$ref",
+    "items", "minItems", "maxItems", "anyOf", "oneOf", "$ref", "not",
 }
 ANNOTATION_KEYWORDS = {"$schema", "$id", "title", "description", "$defs"}
 
@@ -469,6 +510,8 @@ def validate(v, s, root, path, errs):
         n = sum(1 for sub in s["oneOf"] if not schema_errors_at(v, sub, root, path))
         if n != 1:
             errs.append(f"{path}: matches {n} of oneOf (exactly 1 required)")
+    if "not" in s and not schema_errors_at(v, s["not"], root, path):  # v0.7: state/2 uses it (files never list STATE.json)
+        errs.append(f"{path}: {v!r} matches the schema under not")
 
 
 def schema_errors_at(v, s, root, path):
@@ -627,9 +670,14 @@ def month_add(ym, n):
     return f"{y:04d}-{m:02d}"
 
 
+_MONTH_END = {}
+
+
 def month_end(ym):
-    y, m = int(ym[:4]), int(ym[5:7])
-    return dt.date(y, m, calendar.monthrange(y, m)[1])
+    if ym not in _MONTH_END:  # cached: the live mode calls it for every month of every H.6 series (21.3: fast)
+        y, m = int(ym[:4]), int(ym[5:7])
+        _MONTH_END[ym] = dt.date(y, m, calendar.monthrange(y, m)[1])
+    return _MONTH_END[ym]
 
 
 def next_fourth_tuesday_after(d):
@@ -836,7 +884,7 @@ def load_state():
     st.series = {s["id"]: s for s in st.registry.get("series", []) if isinstance(s, dict) and "id" in s}
     st.schemas = {}
     for name in ("registry", "object", "snapshot", "manifest", "revisions", "runs", "review", "review-queue", "publications", "pins", "alerts", "holidays",
-                 "rollback", "state"):  # v0.6 adds rollback/1 (17.5) and state/1 (20.3)
+                 "rollback", "state", "state-v2", "accepted", "collection"):  # v0.6 adds rollback/1 and state/1; v0.7 state/2, accepted/1, collection/1
         st.schemas[name] = load_strict((SCHEMA_DIR / f"{name}.schema.json").read_bytes())
     st.source_records = load_strict((SCHEMA_DIR / "source-records.json").read_bytes())
     st.tree_files = sorted(p for p in TREE.rglob("*") if p.is_file())
@@ -988,6 +1036,7 @@ def section_canonical(st):
     check("C0 canonical serializer self-test (7: code point order, the five short escapes, lowercase \\u00xx, U+007F..U+009F/U+2028/U+FEFF raw, safe integers, -0 as 0)", problems)
     section_selftests_v04(st)
     section_selftests_v05(st)
+    section_selftests_v07(st)
 
 
 def section_selftests_v05(st):
@@ -1170,6 +1219,280 @@ def section_selftests_v05(st):
     check("C6 accepted zeros self-test (v0.6): an entry names one business-day period (no range, pattern or month), field value, on or before the ET date of authorized_at and of checked, not a documented gap, authorized by a person, periods unique, only on a series with refuse_zero; only an exact zero is covered and it is stored as 0.00 (2.3, 4.4)", p)
 
 
+# ---------------------------------------------------------------------------
+# v0.7 rules as pure functions (14.2, 14.3, 17.3, 20.2) and their self-tests C7 to C9
+# ---------------------------------------------------------------------------
+
+
+def _cron_field_matches(field, value, lo, hi):
+    for part in field.split(","):
+        step = 1
+        if "/" in part:
+            part, s = part.split("/", 1)
+            step = int(s)
+        if part == "*":
+            a, b = lo, hi
+        elif "-" in part:
+            a, b = (int(x) for x in part.split("-", 1))
+        else:
+            a = b = int(part)
+        if a <= value <= b and (value - a) % step == 0:
+            return True
+    return False
+
+
+def cron_fires(line, t):
+    """Whether a five-field cron line (minute, hour, day of month, month, day of week with 0 for
+    Sunday; UTC, as GitHub schedules read it) fires at the UTC minute of t. Supports *, */n,
+    a-b, lists and numbers, which is all 14.2 uses."""
+    f = line.split()
+    if len(f) != 5:
+        raise ValueError(f"not a five-field cron line: {line!r}")
+    dow = (t.weekday() + 1) % 7
+    return (_cron_field_matches(f[0], t.minute, 0, 59) and _cron_field_matches(f[1], t.hour, 0, 23) and _cron_field_matches(f[2], t.day, 1, 31)
+            and _cron_field_matches(f[3], t.month, 1, 12) and _cron_field_matches(f[4], dow, 0, 6))
+
+
+def run_gap_severity(hours):
+    """14.3 (v0.7): scheduled-run-gap is a warning when the hours exceed 9, critical over 26."""
+    if hours > RUN_GAP_CRITICAL_HOURS:
+        return "critical"
+    if hours > RUN_GAP_WARNING_HOURS:
+        return "warning"
+    return None
+
+
+def schedule_health_findings(now, workflow_state, pushed_at, runs):
+    """14.3 (v0.7) on the facts of 17.8 and 21.3: the workflow's state, the repository's
+    pushed_at and the run list, newest first, each {"event", "conclusion", "created_at"}
+    (datetimes). Returns {finding key: severity}. A run still in progress (no conclusion yet, such
+    as the run evaluating the facts) neither counts nor breaks the failure streak, like cancelled
+    and skipped; no run listed at all is a critical scheduled-run-gap (14.3 v0.7, F13)."""
+    out = {}
+    if workflow_state != "active":
+        out["workflow-disabled"] = "critical"
+    if pushed_at is not None:
+        days = int((now - pushed_at).total_seconds() // 86400)
+        if days >= 55:
+            out["inactivity"] = "critical"
+        elif days >= 45:
+            out["inactivity"] = "warning"
+    ok = [r["created_at"] for r in runs if r.get("event") == "schedule" and r.get("conclusion") == "success"]
+    ref = max(ok) if ok else (min(r["created_at"] for r in runs) if runs else None)
+    if ref is None:
+        out["scheduled-run-gap"] = "critical"
+    else:
+        sev = run_gap_severity((now - ref).total_seconds() / 3600)
+        if sev:
+            out["scheduled-run-gap"] = sev
+    streak = 0
+    for r in runs:
+        c = r.get("conclusion")
+        if c in ("cancelled", "skipped", None):
+            continue
+        if c in ("failure", "timed_out"):
+            streak += 1
+        else:
+            break
+    if streak >= 3:
+        out["consecutive-failures"] = "critical"
+    return out
+
+
+def full_fetch_sim(runs, record_legacy=False):
+    """17.3 (v0.7, F8, F12): the weekly full fetch is due when the run's ET weekday is Sunday and
+    the group has no successful full fetch on that ET date yet; the window is full for a group
+    with an unpublished series, when its weekly full fetch is due, and always for H.6. A full
+    fetch is successful when its response was received and read: neither failed nor invalid for
+    the group as a whole, so after a failed or invalid one the next Sunday run fetches in full
+    again. `runs`: in time order, each {"now": datetime, "legacy": bool, "groups": {group:
+    {"requested", "unpublished", "h6", "result"}}} with result "ok", "invalid", "failed" or None.
+    A run before the boundary of 21.1 ("legacy") may have kept no full_fetches (the real Stage B
+    files, v0.6 form): its full fetches are then not recorded and a group without an entry counts
+    as never fetched in full; with `record_legacy` (its collector.json carried them, the v0.7 form
+    of appendix G step 1) they are. Returns (plan, last):
+    plan[i][group] is {"weekly", "full", "success"}; last[group] is the now of its last recorded
+    successful full fetch."""
+    last, plan = {}, []
+    for r in runs:
+        today = et_date(r["now"])
+        row = {}
+        for g, f in r["groups"].items():
+            prev = last.get(g)
+            weekly = today.weekday() == 6 and not (prev is not None and et_date(prev) == today)
+            full = bool(f.get("unpublished") or f.get("h6") or weekly)
+            ok = bool(f.get("requested")) and f.get("result") == "ok"
+            row[g] = {"weekly": weekly, "full": full, "success": full and ok}
+        if record_legacy or not r.get("legacy"):
+            for g, x in row.items():
+                if x["success"]:
+                    last[g] = r["now"]
+        plan.append(row)
+    return plan, last
+
+
+def hash_mismatch_note(data, want_sha):
+    """21.2 (F2): the cause named when bytes do not match their recorded SHA-256 but would once
+    every carriage return and line feed pair is turned back into a line feed."""
+    if data is None or not isinstance(want_sha, str):
+        return ""
+    if b"\r\n" in data and sha256_hex(data.replace(b"\r\n", b"\n")) == want_sha:
+        return " (line endings converted: a checkout made with conversion; clone with core.autocrlf=false, 21.2)"
+    return ""
+
+
+def response_record_problems(rec, body=None, n=None, host=None):
+    """20.2 (v0.7, F1): a response record has exactly the twelve fields, each present; n, status
+    and bytes are integers, the five header fields text or null, the others text; bytes and
+    sha256 match the saved body when it is given; n and host match the expected ones when given.
+    Readings for what the text only implies (the collection schema states them too): n at least
+    1, status 100 to 599, url https on the record's host, requested_at a UTC time, sha256 lowercase."""
+    if not isinstance(rec, dict):
+        return ["the record is not a JSON object"]
+    p = []
+    missing = [f for f in RESPONSE_FIELDS if f not in rec]
+    extra = sorted(set(rec) - set(RESPONSE_FIELDS))
+    if missing:
+        p.append(f"fields missing {missing}")
+    if extra:
+        p.append(f"fields not in 20.2 {extra}")
+    for f in RESPONSE_INT_FIELDS:
+        if f in rec and type(rec[f]) is not int:
+            p.append(f"{f} {rec[f]!r} is not an integer")
+    for f in ("host", "url", "requested_at", "sha256"):
+        if f in rec and not isinstance(rec[f], str):
+            p.append(f"{f} {rec[f]!r} is not text")
+    for f in RESPONSE_HEADER_FIELDS:
+        if f in rec and rec[f] is not None and not isinstance(rec[f], str):
+            p.append(f"{f} {rec[f]!r} is neither text nor null")
+    if type(rec.get("n")) is int and rec["n"] < 1:
+        p.append(f"n {rec['n']} is not a request number from 1")
+    if type(rec.get("status")) is int and not 100 <= rec["status"] <= 599:
+        p.append(f"status {rec['status']} is not an HTTP status")
+    if isinstance(rec.get("url"), str):
+        u = urlsplit(rec["url"])
+        if u.scheme != "https":
+            p.append(f"url {rec['url'][:60]!r} is not https (20.2)")
+        if isinstance(rec.get("host"), str) and u.hostname != rec["host"]:
+            p.append(f"host {rec['host']!r} is not the url's host {u.hostname!r}")
+    if isinstance(rec.get("requested_at"), str) and not RX_TIME.fullmatch(rec["requested_at"]):
+        p.append(f"requested_at {rec['requested_at']!r} is not a UTC time")
+    if isinstance(rec.get("sha256"), str) and not re.fullmatch(r"[0-9a-f]{64}", rec["sha256"], re.ASCII):
+        p.append(f"sha256 {rec['sha256'][:20]!r} is not 64 lowercase hex digits")
+    if n is not None and rec.get("n") != n:
+        p.append(f"n {rec.get('n')!r}, expected {n}")
+    if host is not None and rec.get("host") != host:
+        p.append(f"host {rec.get('host')!r}, expected {host!r}")
+    if body is not None:
+        if rec.get("bytes") != len(body):
+            p.append(f"bytes {rec.get('bytes')!r} but the body has {len(body)} bytes")
+        if sha256_hex(body) != rec.get("sha256"):
+            p.append(f"sha256 does not match the body ({sha256_hex(body)[:16]})" + hash_mismatch_note(body, rec.get("sha256")))
+    return p
+
+
+def section_selftests_v07(st):
+    """C7 (14.2, 14.3), C8 (17.3 weekly full fetch), C9 (20.2 response records): this checker's
+    v0.7 rules on fixed cases, the boundaries included."""
+    p = []
+
+    def expect(label, got, want):
+        if got != want:
+            p.append(f"{label}: got {got!r}, expected {want!r}")
+
+    # C7: the cron line fires at exactly the six listed UTC times, every day; the v0.6 lines differ.
+    monday = dt.datetime(2026, 11, 23, tzinfo=UTC)
+    fired = [monday + dt.timedelta(minutes=m) for m in range(7 * 24 * 60) if cron_fires(SCHEDULE_LINES[0], monday + dt.timedelta(minutes=m))]
+    expect("17 */4 * * * fires 42 times in a week", len(fired), 42)
+    expect("17 */4 * * * fires at the six times of 14.2", sorted({t.strftime("%H:%M") for t in fired}), list(SCHEDULE_UTC_TIMES))
+    expect("17 */4 * * * fires on every weekday and weekend day", sorted({t.weekday() for t in fired}), list(range(7)))
+    old = [t for t in (monday + dt.timedelta(minutes=m) for m in range(7 * 24 * 60)) if any(cron_fires(x, t) for x in SCHEDULE_LINES_V06)]
+    expect("the v0.6 lines fire 24 times a weekday and once a weekend day", len(old), 24 * 5 + 2)
+    expect("13:17 UTC Monday: v0.6 fires, v0.7 does not", (any(cron_fires(x, monday.replace(hour=13, minute=17)) for x in SCHEDULE_LINES_V06),
+                                                          cron_fires(SCHEDULE_LINES[0], monday.replace(hour=13, minute=17))), (True, False))
+    h = dt.timedelta(hours=1)
+    s = dt.timedelta(seconds=1)
+    now = dt.datetime(2026, 11, 23, 9, 17, tzinfo=UTC)
+    ok = lambda t, ev="schedule", c="success": {"event": ev, "conclusion": c, "created_at": t}
+    gap = lambda runs: schedule_health_findings(now, "active", now, runs).get("scheduled-run-gap")
+    expect("two missed four-hour runs and an hour of delay, exactly 9 hours: no finding", gap([ok(now - 9 * h)]), None)
+    expect("9 hours and one second: warning", gap([ok(now - 9 * h - s)]), "warning")
+    expect("exactly 26 hours: still a warning", gap([ok(now - 26 * h)]), "warning")
+    expect("26 hours and one second: critical", gap([ok(now - 26 * h - s)]), "critical")
+    expect("a successful manual run is not a scheduled run", gap([ok(now - h, "workflow_dispatch"), ok(now - 10 * h)]), "warning")
+    expect("a skipped scheduled run (gates off) is not a success", gap([ok(now - h, c="skipped"), ok(now - 27 * h)]), "critical")
+    expect("none succeeded: hours since the oldest run listed", gap([ok(now - h, c="failure"), ok(now - 12 * h, c="failure")]), "warning")
+    expect("no run listed at all: critical (14.3 v0.7, F13)", gap([]), "critical")
+    cf = lambda cs: schedule_health_findings(now, "active", now, [ok(now - i * h, c=c) for i, c in enumerate(cs)]).get("consecutive-failures")
+    expect("failure, cancelled, timed_out, skipped, failure: 3 in a row", cf(["failure", "cancelled", "timed_out", "skipped", "failure"]), "critical")
+    expect("failure, failure, success, failure: 2 in a row", cf(["failure", "failure", "success", "failure"]), None)
+    expect("the run in progress neither counts nor breaks the streak (14.3 v0.7)", cf([None, "failure", "failure", "failure"]), "critical")
+    ia = lambda days: schedule_health_findings(now, "active", now - dt.timedelta(days=days), []).get("inactivity")
+    expect("inactivity at 44.9 days, 45, 55", (ia(44.9), ia(45), ia(54.99), ia(55)), (None, "warning", "warning", "critical"))
+    expect("a workflow that is not active", schedule_health_findings(now, "disabled_manually", now, []).get("workflow-disabled"), "critical")
+    check("C7 schedule self-test (v0.7, F7, F13): the one cron line 17 */4 * * * fires at exactly 00:17, 04:17, 08:17, 12:17, 16:17 and 20:17 UTC every day and differs from the v0.6 lines; scheduled-run-gap over 9 hours a warning and over 26 critical, both boundaries excluded, counting scheduled successes only (or the oldest run listed), critical with no run listed; consecutive-failures (a run in progress neither counts nor breaks the streak), inactivity and workflow-disabled as 14.3 gives (14.2, 14.3, 21.3)", p)
+
+    # C8: the weekly full fetch once per group per Sunday (ET).
+    p = []
+    T = lambda s_: parse_utc(s_)
+
+    def g(requested=True, unpublished=False, h6=False, result="ok"):
+        return {"requested": requested, "unpublished": unpublished, "h6": h6, "result": result if requested else None}
+
+    sun1, sun2, sun3 = T("2026-11-22T16:17:00Z"), T("2026-11-22T20:17:00Z"), T("2026-11-23T04:17:00Z")
+    plan, last = full_fetch_sim([{"now": sun1, "groups": {"effr": g()}}, {"now": sun2, "groups": {"effr": g()}}])
+    expect("first Sunday run: weekly due, full", (plan[0]["effr"]["weekly"], plan[0]["effr"]["full"]), (True, True))
+    expect("a later Sunday run after a successful full fetch that day: windowed", (plan[1]["effr"]["weekly"], plan[1]["effr"]["full"]), (False, False))
+    expect("the last successful full fetch is the first Sunday run", last.get("effr"), sun1)
+    plan, _ = full_fetch_sim([{"now": sun1, "groups": {"effr": g(result="failed")}}, {"now": sun2, "groups": {"effr": g()}}])
+    expect("the first Sunday fetch failed: the next Sunday run fetches in full again", plan[1]["effr"]["full"], True)
+    plan, last = full_fetch_sim([{"now": sun1, "groups": {"effr": g(result="invalid")}}, {"now": sun2, "groups": {"effr": g()}}])
+    expect("the first Sunday response was invalid: not a successful full fetch, the next Sunday run repeats it (F12)", (plan[1]["effr"]["full"], last.get("effr")), (True, sun2))
+    plan, _ = full_fetch_sim([{"now": sun1, "groups": {"effr": g(), "debt-total": g(requested=False)}}, {"now": sun2, "groups": {"effr": g(), "debt-total": g()}}])
+    expect("a group not requested by the first Sunday run is due in full later that Sunday", plan[1]["debt-total"]["full"], True)
+    sat = T("2026-11-22T03:17:00Z")  # 22:17 ET on Saturday 2026-11-21
+    plan, _ = full_fetch_sim([{"now": sat, "groups": {"effr": g()}}, {"now": sun3, "groups": {"effr": g()}}])
+    expect("03:17 UTC on a Sunday is Saturday in New York: not weekly", plan[0]["effr"]["weekly"], False)
+    expect("04:17 UTC on a Monday is Sunday 23:17 in New York: weekly due", plan[1]["effr"]["weekly"], True)
+    plan, _ = full_fetch_sim([{"now": sun1, "groups": {"effr": g()}}, {"now": sun3, "groups": {"effr": g()}}])
+    expect("the Sunday 23:17 ET run after a successful 11:17 ET full fetch: not again", plan[1]["effr"]["full"], False)
+    plan, _ = full_fetch_sim([{"now": T("2026-11-19T16:17:00Z"), "groups": {"m1-sa": g(h6=True)}}, {"now": sun1, "groups": {"m1-sa": g(h6=True)}}])
+    expect("H.6 is always full, also on weekdays", plan[0]["m1-sa"]["full"], True)
+    plan, _ = full_fetch_sim([{"now": T("2026-11-22T05:17:00Z"), "groups": {"effr": g(unpublished=True)}}, {"now": sun1, "groups": {"effr": g()}}])
+    expect("a first publication earlier that Sunday (00:17 ET) is that day's full fetch", plan[1]["effr"]["full"], False)
+    legacy_runs = [{"now": T("2026-11-22T05:17:00Z"), "legacy": True, "groups": {"effr": g(unpublished=True)}}, {"now": sun1, "groups": {"effr": g()}}]
+    plan, last = full_fetch_sim(legacy_runs)
+    expect("a full fetch before the boundary whose collector.json kept no full_fetches is not recorded: the group counts as never fetched in full (21.1)", (plan[1]["effr"]["full"], last.get("effr")), (True, sun1))
+    plan, last = full_fetch_sim(legacy_runs, record_legacy=True)
+    expect("a full fetch before the boundary whose collector.json carried full_fetches is recorded (21.1, appendix G step 1)", (plan[1]["effr"]["full"], last.get("effr")), (False, legacy_runs[0]["now"]))
+    plan, _ = full_fetch_sim([{"now": T("2026-11-23T16:17:00Z"), "groups": {"effr": g()}}])
+    expect("a Monday run: windowed", plan[0]["effr"]["full"], False)
+    check("C8 weekly full fetch self-test (v0.7, F8, F12): once per group per Sunday (ET); a failed or invalid Sunday fetch is not successful and the next Sunday run repeats it; the ET date decides (03:17 UTC Sunday is Saturday, 04:17 UTC Monday is Sunday); H.6 and unpublished groups always full, and that counts as the day's full fetch; a v0.6 run's full fetch is not recorded (5, 17.1, 17.3, 21.1)", p)
+
+    # C9: response records (20.2, F1).
+    p = []
+    body = b'{"refRates":[]}'
+    good = {"n": 1, "host": "markets.newyorkfed.org", "url": "https://markets.newyorkfed.org/api/rates/unsecured/effr/search.json?startDate=2026-09-18&endDate=2026-11-16",
+            "requested_at": "2026-11-16T20:17:01Z", "status": 200, "content_type": "application/json", "content_length": None, "etag": None,
+            "last_modified": None, "date": "Mon, 16 Nov 2026 20:17:01 GMT", "bytes": len(body), "sha256": sha256_hex(body)}
+    expect("a record with the twelve fields", response_record_problems(good, body, 1, "markets.newyorkfed.org"), [])
+    for f in RESPONSE_FIELDS:
+        expect(f"without {f}", bool(response_record_problems({k: v for k, v in good.items() if k != f}, body)), True)
+    for k, v in (("base", "001-markets.newyorkfed.org"), ("headers", {}), ("error", None)):
+        expect(f"an extra field {k}", bool(response_record_problems(dict(good, **{k: v}), body)), True)
+    for k, v in (("n", "1"), ("status", "200"), ("bytes", str(len(body))), ("n", True), ("status", 200.5), ("content_length", 15), ("etag", 5),
+                 ("url", None), ("sha256", None), ("requested_at", None), ("host", None), ("date", ["x"])):
+        expect(f"{k} as {v!r}", bool(response_record_problems(dict(good, **{k: v}), body)), True)
+    expect("bytes not the body's", bool(response_record_problems(dict(good, bytes=len(body) + 1), body)), True)
+    expect("sha256 not the body's", bool(response_record_problems(dict(good, sha256="0" * 64), body)), True)
+    expect("an http url", bool(response_record_problems(dict(good, url=good["url"].replace("https", "http", 1)), body)), True)
+    expect("a host that is not the url's", bool(response_record_problems(dict(good, host="example.org"), body)), True)
+    crlf = b'[\r\n1]'
+    conv = response_record_problems(dict(good, bytes=len(crlf), sha256=sha256_hex(b'[\n1]')), crlf)
+    expect("a body converted to CRLF is named 'line endings converted'", any("line endings converted" in x for x in conv), True)
+    check("C9 response record self-test (v0.7, F1): exactly the twelve fields of 20.2, each present (header fields null allowed, never absent); n, status and bytes integers (a string, a boolean or a fraction refused), the others text; an extra field (base, headers, error) refused; bytes and sha256 must match the body, with the line endings diagnosis of 21.2", p)
+
+
 def section_selftests_v04(st):
     """C2 and C3: the v0.4 time rules on fixed cases, computed with the committed registry
     and holiday table, so a later change to either shows here first."""
@@ -1263,7 +1586,7 @@ def section_schemas(st):
         unknown = sorted(used - SUPPORTED_KEYWORDS - ANNOTATION_KEYWORDS)
         check(f"S0 {name}.schema.json uses only keywords this validator implements",
               [f"unsupported: {', '.join(unknown)}"] if unknown else [], ", ".join(sorted(used - ANNOTATION_KEYWORDS)))
-    for relpath, value in sorted(st.tree_json.items()):
+    for relpath, value in sorted(st.tree_json.items()) if not LIVE_MODE else ():  # S1 reads the example tree: not in the live modes
         name = schema_for_path(relpath)
         if name is None:
             check(f"S1 {relpath} has a schema (12.8)", ["no schema in pipeline/schemas/ covers this path"])
@@ -1417,7 +1740,10 @@ def section_schemas_v04(st):
     p4 = section_schemas_v05_probes(st, probe, rec, dec, q, ref, t, sha)
     n_v05 = n
     p5 = section_schemas_v06_probes(st, probe, q, t, sha)
-    check("S2 the schemas agree with the text on what v0.6 kept from v0.4, under the v0.6 ids: $id and schema const registry/4, snapshot/2, manifest/3, runs/2, review/3, review-queue/4, rollback/1, state/1; csvs entries; absences and their kinds; permissions, publication outcomes and refusal rules; registry review policy, unknown zones and route notices (4.1 to 4.5, 9, 11.5, 11.6, 14.1, 17.5, 20.3; the text wins)", p, f"{n_v04} probes")
+    n_v06 = n
+    p6 = section_schemas_v07_probes(st, probe, t, sha)
+    check("S6 the v0.7 schemas agree with the text: the state descriptor state/2 (root always root, accepted, files without STATE.json), the promotion record accepted/1, the collection record collection/1 with the twelve response record fields of 20.2 and their types; state/1 refused for the v0.7 layout (20.2, 21.1, 21.2, 21.4, appendix F)", p6, f"{n - n_v06} probes")
+    check("S2 the schemas agree with the text on what v0.7 kept from v0.4, under the v0.7 ids: $id and schema const registry/4, snapshot/2, manifest/3, runs/2, review/3, review-queue/4, rollback/1, state/1, state/2, accepted/1, collection/1; csvs entries; absences and their kinds; permissions, publication outcomes and refusal rules; registry review policy, unknown zones and route notices (4.1 to 4.5, 9, 11.5, 11.6, 14.1, 17.5, 20.3; the text wins)", p, f"{n_v04} probes")
     check("S4 the schemas agree with the text on the v0.5 shapes v0.6 keeps: snapshot frozen[].origin, manifest rollback.locked, the clear decision and its cleared outcome, review-queue frozen entries with origin, reviewer null for a rollback and locked_changes, the refusal rules not-locked and locked, the registry's user_agent, contact and refuse_zero; the older ids refused (4.3, 4.4, 8, 9, 11.5, 17.5, appendix D)", p4, f"{n_v05 - n_v04} probes")
     check("S5 the v0.6 schemas agree with the text on the v0.6 shapes: several locks per series in a snapshot and in the queue (one entry per lock), accepted_zeros entries, the rollback record rollback/1, the state descriptor state/1; registry/3 and review-queue/3 refused (4.4, 11.5, 17.5, 20.3, appendix E)", p5, f"{n - n_v05} probes")
     check("S3 where a schema is looser than the text, the rule is enforced by a named check of this checker (listed here as schema findings)", [],
@@ -1586,8 +1912,106 @@ def section_schemas_v06_probes(st, probe, q, t, sha):
     probe("a state descriptor whose root escapes unpublished/ (20.1)", "state", dict(stt, root="unpublished/../state"), False, bucket=p5)
     probe("a state file outside state/ (20.1: state/ holds the state files)", "state", dict(stt, files=[{"path": "unpublished/x/live/manifest.json", "sha256": sha, "bytes": 1}]), False, bucket=p5)
     probe("a state file entry without its SHA-256 (20.3)", "state", dict(stt, files=[{"path": "state/review-queue.json", "bytes": 1}]), False, bucket=p5)
-    probe("a state descriptor with a root of null (20.1: a run always commits its root; the text gives no null root)", "state", dict(stt, root=None), False, "no root check (the state store is not in a pipeline root; listed in the report)", bucket=p5)
+    probe("a state descriptor with a root of null (20.1: a run always commits its root; the text gives no null root)", "state", dict(stt, root=None), False, "SB1 in the state mode (a Stage B STATE.json must name its root)", bucket=p5)
     return p5
+
+
+def section_schemas_v07_probes(st, probe, t, sha):
+    """S6: documents the v0.7 text accepts or refuses, against the committed schemas."""
+    p6 = []
+    ident = {"snapshot": "20261116T161700Z", "manifest_sha256": sha}
+    # 21.2: STATE.json rmf.econ.state/2
+    s2 = {"schema": SCHEMA_IDS["state-v2"], "run": "sched-1-1", "written_at": t, "root": "root", "manifest_sha256": sha, "accepted": ident,
+          "files": [{"path": "state/accepted.json", "sha256": sha, "bytes": 900}, {"path": "state/alerts.json", "sha256": "b" * 64, "bytes": 40}]}
+    probe("a state/2 descriptor (21.2)", "state-v2", s2, True, bucket=p6)
+    for f in ("schema", "run", "written_at", "root", "manifest_sha256", "accepted", "files"):
+        probe(f"a state/2 descriptor without {f} (21.2)", "state-v2", {k: v for k, v in s2.items() if k != f}, False, bucket=p6)
+    probe("a state/2 descriptor with no manifest: manifest_sha256 and accepted null (21.2)", "state-v2", dict(s2, manifest_sha256=None, accepted=None), True, bucket=p6)
+    probe("a state/2 descriptor whose root is a Stage B folder (21.2: root is always root)", "state-v2", dict(s2, root="unpublished/live-1-1"), False, bucket=p6)
+    probe("a state/2 descriptor with the state/1 id (21.2)", "state-v2", dict(s2, schema=SCHEMA_IDS["state"]), False, bucket=p6)
+    probe("a state/1 descriptor of the v0.7 layout (20.3 keeps state/1 for the Stage B layout only)", "state", dict(s2, schema=SCHEMA_IDS["state"]), False, bucket=p6)
+    probe("a state/2 descriptor listing state/STATE.json (21.2: STATE.json itself is not listed)", "state-v2",
+          dict(s2, files=s2["files"] + [{"path": "state/STATE.json", "sha256": sha, "bytes": 1}]), False, bucket=p6)
+    probe("a state/2 descriptor with an extra field (21.2)", "state-v2", dict(s2, note="x"), False, bucket=p6)
+    probe("an accepted identifier without manifest_sha256 (21.1: the pair)", "state-v2", dict(s2, accepted={"snapshot": ident["snapshot"]}), False, bucket=p6)
+    probe("an accepted identifier whose snapshot is not a snapshot id (21.1)", "state-v2", dict(s2, accepted=dict(ident, snapshot="2026-11-16T16:17:00Z")), False, bucket=p6)
+    probe("an accepted identifier with an extra field (21.1)", "state-v2", dict(s2, accepted=dict(ident, at=t)), False, bucket=p6)
+    probe("a state file path escaping state/ (21.2: each state file's path)", "state-v2",
+          dict(s2, files=[{"path": "state/../root/live/manifest.json", "sha256": sha, "bytes": 1}]), False, "ST4 (every listed path is a file under state/)", bucket=p6)
+    probe("state files not sorted by path (21.2: sorted by path)", "state-v2", dict(s2, files=list(reversed(s2["files"]))), False, "ST4", bucket=p6)
+    probe("a state file listed twice (21.2)", "state-v2", dict(s2, files=s2["files"] + [s2["files"][1]]), False, "ST4", bucket=p6)
+    probe("accepted null while a manifest exists (21.2: null with no manifest only)", "state-v2", dict(s2, accepted=None), False, "ST5", bucket=p6)
+    probe("accepted naming another manifest than manifest_sha256 (21.2)", "state-v2", dict(s2, accepted=dict(ident, manifest_sha256="c" * 64)), False, "ST5", bucket=p6)
+    probe("a state/2 run id with a slash (17.2 run ids)", "state-v2", dict(s2, run="sched/1"), False, bucket=p6)
+    probe("a state/2 written_at with an offset (3: UTC with Z)", "state-v2", dict(s2, written_at="2026-11-16T15:17:00-05:00"), False, bucket=p6)
+    # 21.1: state/accepted.json rmf.econ.accepted/1
+    acc = {"schema": SCHEMA_IDS["accepted"], "dataset": ident,
+           "source": {"store_commit": "1" * 40, "root": "unpublished/live-1-1", "run": "live-1-1"},
+           "verification": {"checker": {"mode": "live", "pass": 250, "fail": 0, "skip": 0}, "state": "ok", "at": t},
+           "decision": {"brief": "docs/P26_STAGE_B_ACCEPTANCE_STAGE_C.md", "decided_on": "2026-11-19"},
+           "promoted_at": t, "promoted_by": "example-maintainer", "run": "promote-1-1"}
+    probe("a promotion record (21.1)", "accepted", acc, True, bucket=p6)
+    for f in ("schema", "dataset", "source", "verification", "decision", "promoted_at", "promoted_by", "run"):
+        probe(f"a promotion record without {f} (21.1)", "accepted", {k: v for k, v in acc.items() if k != f}, False, bucket=p6)
+    for part, keys in (("source", ("store_commit", "root", "run")), ("verification", ("checker", "state", "at")), ("decision", ("brief", "decided_on"))):
+        for f in keys:
+            probe(f"a promotion record whose {part} lacks {f} (21.1)", "accepted", dict(acc, **{part: {k: v for k, v in acc[part].items() if k != f}}), False, bucket=p6)
+    for f in ("mode", "pass", "fail", "skip"):
+        probe(f"a promotion record whose checker lacks {f} (21.1)", "accepted",
+              dict(acc, verification=dict(acc["verification"], checker={k: v for k, v in acc["verification"]["checker"].items() if k != f})), False, bucket=p6)
+    probe("a promotion verified with a FAIL (21.1: fail 0)", "accepted", dict(acc, verification=dict(acc["verification"], checker=dict(acc["verification"]["checker"], fail=1))), False, bucket=p6)
+    probe("a promotion verified by the plain mode, not live (21.1)", "accepted", dict(acc, verification=dict(acc["verification"], checker=dict(acc["verification"]["checker"], mode="plain"))), False, bucket=p6)
+    probe("a promotion whose state verification is not ok (21.1)", "accepted", dict(acc, verification=dict(acc["verification"], state="partial")), False, bucket=p6)
+    probe("a promotion whose source root is not a Stage B folder (21.1: unpublished/<run id>)", "accepted", dict(acc, source=dict(acc["source"], root="root")), False, bucket=p6)
+    probe("a promotion whose source run is not the folder's run (21.1)", "accepted", dict(acc, source=dict(acc["source"], run="live-9-9")), False, "ST7", bucket=p6)
+    probe("a promotion started by an automation account (21.6: automation accounts are refused)", "accepted", dict(acc, promoted_by="github-actions[bot]"), False, "ST7", bucket=p6)
+    probe("a promotion record with an extra field (21.1)", "accepted", dict(acc, note="x"), False, bucket=p6)
+    probe("a promotion whose decision date is a time (21.1: its date)", "accepted", dict(acc, decision=dict(acc["decision"], decided_on=t)), False, bucket=p6)
+    probe("a promotion whose brief is a bare file name (21.1 v0.7: the path docs/<name>.md)", "accepted", dict(acc, decision=dict(acc["decision"], brief="P26_STAGE_B_ACCEPTANCE_STAGE_C.md")), False, bucket=p6)
+    probe("a promotion whose dataset is not the pair (21.1)", "accepted", dict(acc, dataset={"manifest_sha256": sha}), False, bucket=p6)
+    # 21.4: runs/<run id>.json rmf.econ.collection/1, with the 20.2 response records
+    resp = {"n": 1, "host": "markets.newyorkfed.org", "url": "https://markets.newyorkfed.org/api/rates/unsecured/effr/search.json?startDate=2026-09-18&endDate=2026-11-16",
+            "requested_at": t, "status": 200, "content_type": "application/json", "content_length": "100", "etag": None, "last_modified": None,
+            "date": "Mon, 16 Nov 2026 20:17:01 GMT", "bytes": 100, "sha256": sha}
+    cr = {"schema": SCHEMA_IDS["collection"], "run": "sched-2-1", "trigger": "schedule", "operation": None, "started_at": t, "ended_at": t,
+          "outcome": "no-change", "requests": [resp], "validation": {"checker": {"mode": "live", "pass": 250, "fail": 0, "skip": 0}, "state": "ok"},
+          "accepted": ident, "freshness": [{"series": s["id"], "status": "fresh", "last_period": "2026-11-12", "deadline": t} for s in st.registry.get("series", [])],
+          "expected_next_update_by": t, "added": {"files": 1, "bytes": 100}, "month_added_bytes": 100}
+    probe("a collection record (21.4)", "collection", cr, True, bucket=p6)
+    for f in cr:
+        probe(f"a collection record without {f} (21.4)", "collection", {k: v for k, v in cr.items() if k != f}, False, bucket=p6)
+    for f in RESPONSE_FIELDS:
+        probe(f"a response record without {f} (20.2 F1: each always present)", "collection", dict(cr, requests=[{k: v for k, v in resp.items() if k != f}]), False, bucket=p6)
+    probe("a response record with the five header fields null (20.2)", "collection",
+          dict(cr, requests=[dict(resp, **{f: None for f in RESPONSE_HEADER_FIELDS})]), True, bucket=p6)
+    for k, v, why in (("base", "001-markets.newyorkfed.org", "an extra field"), ("n", "1", "n as text"), ("status", "200", "status as text"),
+                      ("bytes", "100", "bytes as text"), ("content_length", 100, "content_length as a number (20.2: the others text)"),
+                      ("etag", 5, "etag as a number"), ("n", 0, "n 0 (20.2: from 1)"), ("url", "http://markets.newyorkfed.org/x", "an http url (20.2: only https)"),
+                      ("sha256", "A" * 64, "an uppercase sha256"), ("requested_at", "2026-11-16 20:17:01", "requested_at not in the UTC form"),
+                      ("url", None, "url null (20.2: text)"), ("host", None, "host null")):
+        probe(f"a response record with {why}", "collection", dict(cr, requests=[dict(resp, **{k: v})]), False, bucket=p6)
+    op = dict(cr, run="promote-1-1", trigger="operation", operation="promote", outcome="promoted", requests=[])
+    probe("the promotion's collection record (21.4: trigger operation, operation promote, outcome promoted, no requests)", "collection", op, True, bucket=p6)
+    for o in ("review", "rollback", "restore"):
+        probe(f"an operation record for {o} (21.4)", "collection", dict(op, operation=o, outcome="published"), True, bucket=p6)
+    probe("a collection record with a run record trigger (21.4: schedule, manual or operation)", "collection", dict(cr, trigger="review"), False, bucket=p6)
+    probe("an operation 21.6 does not name", "collection", dict(op, operation="approve"), False, bucket=p6)
+    probe("an outcome 14.1 and 21.4 do not name", "collection", dict(cr, outcome="accepted"), False, bucket=p6)
+    probe("a collection record validated with a FAIL (21.3: no FAIL before any write)", "collection",
+          dict(cr, validation={"checker": {"mode": "live", "pass": 250, "fail": 1, "skip": 0}, "state": "ok"}), False, bucket=p6)
+    probe("a collection record validated by another mode (21.3: live)", "collection",
+          dict(cr, validation={"checker": {"mode": "root", "pass": 250, "fail": 0, "skip": 0}, "state": "ok"}), False, bucket=p6)
+    probe("a collection record without an accepted identifier (21.4: the identifier after the run)", "collection", dict(cr, accepted=None), False, bucket=p6)
+    probe("a freshness status 21.4 does not name", "collection", dict(cr, freshness=[dict(cr["freshness"][0], status="late")]), False, bucket=p6)
+    probe("a freshness deadline that is not a time", "collection", dict(cr, freshness=[dict(cr["freshness"][0], deadline="2026-11-17")]), False, bucket=p6)
+    probe("a freshness entry with an extra field", "collection", dict(cr, freshness=[dict(cr["freshness"][0], note="x")]), False, bucket=p6)
+    probe("added with a negative count", "collection", dict(cr, added={"files": -1, "bytes": 0}), False, bucket=p6)
+    probe("a scheduled record naming an operation (21.4: operation null unless trigger operation)", "collection", dict(cr, operation="review"), False, "ST9", bucket=p6)
+    probe("outcome promoted outside the promotion (21.4)", "collection", dict(cr, outcome="promoted"), False, "ST9", bucket=p6)
+    probe("an operation record with requests (21.4: empty for an operation)", "collection", dict(op, requests=[resp]), False, "ST9", bucket=p6)
+    probe("freshness for one series only (21.4: every registered series, in registry order)", "collection", dict(cr, freshness=cr["freshness"][:1]), False, "ST14", bucket=p6)
+    probe("freshness in reverse registry order (21.4)", "collection", dict(cr, freshness=list(reversed(cr["freshness"]))), False, "ST14", bucket=p6)
+    return p6
 
 
 # ---------------------------------------------------------------------------
@@ -2488,9 +2912,9 @@ def section_tree(st):
     problems = []
     if not isinstance(sched, list):
         problems.append("schedule is not a list (9)")
-    elif sorted(sched) != sorted(["17 * * * 1-5", "17 15 * * 0,6"]):
-        problems.append(f"{sched} is not hourly at :17 on weekdays plus 15:17 UTC on weekends (14.2, decision P8)")
-    check("T19 health.schedule is the list of cron lines of 14.2 (hourly :17 weekdays, 15:17 UTC weekends)", problems, " | ".join(sched) if isinstance(sched, list) else "")
+    elif sorted(sched) != sorted(SCHEDULE_LINES):
+        problems.append(f"{sched} is not the one cron line {SCHEDULE_LINES[0]!r} of 14.2 (v0.7, F7: every four hours at :17 UTC; it replaces decision P8's two lines)")
+    check("T19 health.schedule lists the cron lines in force, the one line 17 */4 * * * of 14.2 (v0.7)", problems, " | ".join(sched) if isinstance(sched, list) else "")
 
     # Every run record (14.1)
     problems = []
@@ -3935,7 +4359,6 @@ RX_RUN_ID = re.compile(r"[A-Za-z0-9._-]{1,80}", re.ASCII)
 LIMIT_OBJECT, LIMIT_FILE, LIMIT_MANIFEST = 2_000_000, 5_000_000, 256_000
 LIMIT_SITE, LIMIT_ARCHIVE_MONTH, LIMIT_PINS = 250_000_000, 50_000_000, 12
 WINDOW_DAYS = 35
-SCHEDULE_LINES = ["17 * * * 1-5", "17 15 * * 0,6"]
 DECIMAL_FIELDS = ("value", "lower", "upper")
 _ABSENT = object()
 
@@ -3984,7 +4407,10 @@ def canonical_problem(data, value):
 class RootView:
     """Read-only view of a pipeline root (17.1). Files are data: parsed, never executed."""
 
-    def __init__(self, root):
+    def __init__(self, root, state=None, state_exclude=()):
+        """`state` and `state_exclude` (v0.7, 21.2): the state mode composes the working root of
+        21.3 from the store's root/ and state/; the state files then live outside the root, and
+        STATE.json and accepted.json, which are not root files, are left out of the listing."""
         self.root = Path(root).resolve()
         self.live = self.root / "live"
         self.arch = self.root / "archive" / "files"
@@ -3992,7 +4418,8 @@ class RootView:
         self.holds = self.root / "archive" / "holds"
         self.reviews = self.root / "archive" / "reviews"
         self.rollbacks = self.root / "archive" / "rollbacks"  # 17.5 (v0.6): the rollback records
-        self.state = self.root / "archive" / "state"
+        self.state = Path(state).resolve() if state is not None else self.root / "archive" / "state"
+        self.state_exclude = set(state_exclude)
         self.staging = self.root / "staging"
         self._bytes, self._json, self._files, self._sets = {}, {}, {}, {}
 
@@ -4002,11 +4429,17 @@ class RootView:
                 and ":" not in relpath and all(part not in ("", ".", "..") for part in relpath.split("/")))
 
     def name(self, base):
-        return base.relative_to(self.root).as_posix()
+        try:
+            return base.relative_to(self.root).as_posix()
+        except ValueError:  # the store's state/ beside root/ (21.2): named as the working root names it
+            return "archive/state" if base == self.state else base.as_posix()
 
     def files(self, base):
         if base not in self._files:
-            self._files[base] = sorted(p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file()) if base.is_dir() else []
+            got = sorted(p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file()) if base.is_dir() else []
+            if base == self.state and self.state_exclude:
+                got = [f for f in got if f not in self.state_exclude]
+            self._files[base] = got
         return self._files[base]
 
     def has(self, base, relpath):
@@ -4745,7 +5178,7 @@ def rc_manifest_live(ctx):
                 if data is None:
                     p.append(f"{sid}: {path} missing from live/")
                 elif sha256_hex(data) != sha:
-                    p.append(f"{sid}: live/{path} has sha256 {sha256_hex(data)}, the manifest says {sha}")
+                    p.append(f"{sid}: live/{path} has sha256 {sha256_hex(data)}, the manifest says {sha}" + hash_mismatch_note(data, sha))
     check("T37 the live manifest names only content-addressed files (objects, CSV segments, revision log versions); each exists in live/ with its SHA-256; every path equals its address and a CSV path names its series and segment (9, 12.3)", p, f"{n} files")
     ref, p = m.get("snapshot") or {}, []
     if ref.get("path") != f"snapshots/{ref.get('id')}.json":
@@ -4755,7 +5188,7 @@ def rc_manifest_live(ctx):
         if data is None:
             p.append(f"{rv.name(base)}/{ref.get('path')} missing")
         elif sha256_hex(data) != ref.get("sha256"):
-            p.append(f"{rv.name(base)}/{ref.get('path')} has sha256 {sha256_hex(data)}, the manifest says {ref.get('sha256')}")
+            p.append(f"{rv.name(base)}/{ref.get('path')} has sha256 {sha256_hex(data)}, the manifest says {ref.get('sha256')}" + hash_mismatch_note(data, ref.get("sha256")))
     if ctx.cur is not None and ctx.cur.get("id") != ref.get("id"):
         p.append(f"the snapshot's own id is {ctx.cur.get('id')}")
     check("T38 the live manifest names its snapshot by id, path and SHA-256, present in live/ and in the archive (9, 12.3)", p, str(ref.get("id")))
@@ -5019,12 +5452,16 @@ def rc_snapshot_chain(ctx):
                 p.append(f"{sid_}: no series' objects, no status between published, held and not yet published, no hold candidate and no frozen series differs from {base_id} (8, 17.3: no snapshot is written then)")
     check("T45 the snapshot chain: previous is the snapshot before in time, ids are the run's time, attempt.at is the run's now, and each snapshot records a change (3, 8, 17.2, 17.3)", p, f"{len(ctx.order)} snapshots")
 
-    p = []
+    p, n_legacy = [], 0
+    legacy_hash = rx_legacy_registry_hash(ctx)
     for sid_ in ctx.order:
         s = ctx.snaps[sid_]
         rh = (s.get("run") or {}).get("registry_sha256")
-        if rh != reg_hash:
-            p.append(f"{sid_}: run.registry_sha256 {rh} is not the registry's canonical hash {reg_hash}")
+        if rh != reg_hash and rx_legacy(ctx, s.get("created_at")) and rh == legacy_hash:
+            n_legacy += 1  # written under v0.6: the same registry with conventions v0.6 (see LEGACY in section_root)
+        elif rh != reg_hash:
+            p.append(f"{sid_}: run.registry_sha256 {rh} is not the registry's canonical hash {reg_hash}"
+                     + (f" (nor, for a snapshot written before v0.7, the hash {legacy_hash[:16]} of the same registry with conventions {LEGACY_CONVENTIONS})" if rx_legacy(ctx, s.get("created_at")) else ""))
         notices = s.get("notices", {})
         if set(notices) != used_sources:
             p.append(f"{sid_}: notices for {sorted(notices)}, the registered series use {sorted(used_sources)}")
@@ -5032,7 +5469,8 @@ def rc_snapshot_chain(ctx):
             for f in ("attribution", "notice", "terms_url"):
                 if notices[src].get(f) != st.registry["sources"][src].get(f):
                     p.append(f"{sid_}: notices.{src}.{f} is not the registry text with its placeholders kept (8)")
-    check("T46 every snapshot carries the registry's canonical SHA-256 and the notices as written in the registry, placeholders kept (4, 4.3, 8)", p)
+    check("T46 every snapshot carries the registry's canonical SHA-256 and the notices as written in the registry, placeholders kept (4, 4.3, 8)", p,
+          f"{n_legacy} snapshot(s) written before v0.7 carry the v0.6 registry's hash (21.1)" if n_legacy else "")
 
 
 # --- T47 to T50: objects ---
@@ -5160,7 +5598,8 @@ def rc_released(ctx):
                     # release dates reach past the month end. The dates a run was given are not stored in
                     # the root, so for later months only the form can be checked: not-recorded, or a date
                     # after the month ends, on or after calendar_valid_from, not after the snapshot's ET date.
-                    after = [x for x in h6_dates if x > month_end(k).isoformat()]
+                    me = month_end(k).isoformat()
+                    after = [x for x in h6_dates if x > me]
                     if after:
                         want = {"basis": "calendar", "date": after[0]} if after[0] >= cal.get("calendar_valid_from", "9999") else nr
                         if got != want:
@@ -5199,7 +5638,7 @@ def rx_stale(ctx, series_id, state_of, at, depth=0):
 def rc_manifest_summaries(ctx):
     rv, st = ctx.rv, ctx.st
     p_sum, p_status, p_attr, p_win, p_sched, p_next, p_csv = [], [], [], [], [], [], []
-    n_csv, csv_done, next_notes, n_next = 0, {}, [], 0
+    n_csv, csv_done, next_notes, n_next, n_sched_legacy = 0, {}, [], 0, 0
     pins_doc, _ = rv.load(rv.state, "pins.json")
     pins = rx_pins(ctx)
     unpinned = {u.get("snapshot") for u in (pins_doc.get("unpinned") or []) if isinstance(u, dict)} if isinstance(pins_doc, dict) and isinstance(pins_doc.get("unpinned"), list) else set()
@@ -5294,7 +5733,7 @@ def rc_manifest_summaries(ctx):
                     if data is None:
                         csv_done[key] = f"{ref.get('path')} is not in archive/files/"
                     elif sha256_hex(data) != ref.get("sha256"):
-                        csv_done[key] = f"archive/files/{ref.get('path')} has sha256 {sha256_hex(data)}, the manifest says {ref.get('sha256')}"
+                        csv_done[key] = f"archive/files/{ref.get('path')} has sha256 {sha256_hex(data)}, the manifest says {ref.get('sha256')}" + hash_mismatch_note(data, ref.get("sha256"))
                     elif data != want:
                         csv_done[key] = f"{ref.get('path')} differs from the segment CSV recomputed from object {oref.get('path')}, the registry and retrieved_at {ref['retrieved_at']} at {first_line_difference(data, want)}"
                     else:
@@ -5315,8 +5754,10 @@ def rc_manifest_summaries(ctx):
                 p_win.append(f"{name}: pins.json pins {late} made before generated_at are not in pages_window.pinned")
         # schedule (14.2)
         sched = (m.get("health") or {}).get("schedule")
-        if not isinstance(sched, list) or sorted(sched) != sorted(SCHEDULE_LINES):
-            p_sched.append(f"{name}: schedule {sched!r}, expected the cron lines {SCHEDULE_LINES}")
+        if isinstance(sched, list) and sorted(sched) == sorted(SCHEDULE_LINES_V06) and rx_legacy(ctx, m.get("generated_at")):
+            n_sched_legacy += 1  # written under v0.6, when decision P8's lines were the ones listed (see LEGACY in section_root)
+        elif not isinstance(sched, list) or sorted(sched) != sorted(SCHEDULE_LINES):
+            p_sched.append(f"{name}: schedule {sched!r}, expected the cron line in force {SCHEDULE_LINES} (14.2 v0.7; {SCHEDULE_LINES_V06} were decision P8's lines before v0.7)")
         # expected_next_update_by (14.2)
         deadlines, missing = [], []
         for sid in sorted(set(state_of) & ctx.reg_ids):
@@ -5345,7 +5786,8 @@ def rc_manifest_summaries(ctx):
     check("T52 every manifest's series status is right as of its generated_at: not-yet-published, held for a series with an open hold, frozen with the lock's reason for a series listed in the snapshot's frozen or the manifest's rollback.locked (either origin), else stale or fresh by the 14.2 deadline and the registry staleness rule (9, 11.5, 12.9, 14.2, 4.4)", p_status, f"{nm} manifests")
     check("T53 every manifest's attribution and notice are the registry texts filled with data_name and {year} as the ET year of retrieved_at, or of generated_at when not yet published (4.3, 8, decision P5)", p_attr, f"{nm} manifests")
     check("T54 pages_window.days is 35 and the newest manifest's pinned ids agree with archive/state/pins.json (9, 13, 17.6)", p_win)
-    check("T55 health.schedule is the two cron lines of 14.2 (decision P8)", p_sched, " | ".join(SCHEDULE_LINES))
+    check("T55 every manifest's health.schedule lists the cron lines in force: the one line 17 */4 * * * of 14.2 (v0.7, F7)", p_sched,
+          " | ".join(SCHEDULE_LINES) + (f"; {n_sched_legacy} manifest(s) written before v0.7 list decision P8's lines (21.1)" if n_sched_legacy else ""))
     if p_next or n_next:
         check("T56 health.expected_next_update_by is the earliest 14.2 deadline among published series that are neither held nor frozen, or generated_at when there is none (14.2, 17.3)", p_next,
               f"{n_next} manifests recomputed" + (f"; not computable for {len(next_notes)}: {next_notes[0]}" if next_notes else ""))
@@ -6001,20 +6443,83 @@ def rx_lock_detail(ctx, sid, entry):
     return published, locked, (lock_changes(published, locked) if locked is not None else None)
 
 
+def rx_legacy(ctx, t):
+    """21.1 (v0.7, F10): whether a manifest, snapshot or run made at time t is up to and including
+    the promoted dataset (time not after the promoted snapshot's), so that exactly three rules are
+    read as v0.6 wrote them (T46, T55, T116). The boundary comes from archive/state/accepted.json
+    of a working root (the state mode composes one from the store); without it, never."""
+    lu = getattr(ctx, "legacy_until", None)
+    return lu is not None and isinstance(t, str) and t <= lu
+
+
+def rx_legacy_registry_hash(ctx):
+    """The canonical hash of the committed registry with `conventions` set to v0.6: the registry
+    a v0.6 run used when v0.7 changed nothing else in it (appendix F9 changes only conventions)."""
+    reg = json.loads(json.dumps(ctx.st.registry))
+    reg["conventions"] = LEGACY_CONVENTIONS
+    return sha256_hex(canon_bytes(reg))
+
+
+def rx_full_plan(ctx):
+    """17.3 (v0.7): for every collecting run record, per request group, whether the weekly full
+    fetch was due and whether the window was full (C8, full_fetch_sim). A group's fetch failed
+    when a series of it failed (a fetch failure carries every series of the group forward), and
+    was invalid as a whole when every series of it was invalid (a format failure, 11.3); a
+    per-series invalid leaves the fetch successful. Returns {"runs": {run id: {group: row}},
+    "last": {group: datetime}, "groups": [...]}."""
+    if getattr(ctx, "full_plan", None) is not None:
+        return ctx.full_plan
+    st = ctx.st
+    grp = request_group_of(st)
+    groups = sorted(set(grp.values()), key=[s["id"] for s in st.registry.get("series", [])].index)
+    runs, ids = [], []
+    for rec in rx_records_in_time(ctx):
+        if rec.get("trigger") not in ("schedule", "manual") or not is_time(rec.get("started_at")):
+            continue
+        before = rx_state_at(ctx, rec["started_at"], inclusive=False) or {}
+        req = requested_groups(st, rec)
+        outcomes = rec.get("series") or {}
+        row = {}
+        for g in groups:
+            members = [s for s in st.series if grp[s] == g]
+            oc = [outcomes.get(s) for s in members]
+            result = "failed" if "failed" in oc else ("invalid" if oc and all(x == "invalid" for x in oc) else ("ok" if g in req else None))
+            row[g] = {"requested": g in req, "h6": any(st.series[s]["frequency"] == "month" for s in members),
+                      "unpublished": any(not ((before.get("series") or {}).get(s) or {}).get("objects") for s in members), "result": result}
+        runs.append({"now": parse_utc(rec["started_at"]), "legacy": rx_legacy(ctx, rec["started_at"]), "groups": row})
+        ids.append(rec.get("id"))
+    # 21.1 (v0.7): the full fetches of runs before the boundary count when the collector.json of that
+    # time carried them (the v0.7 form). The state mode knows it from the Stage B folder's collector.json
+    # (ctx.legacy_ff); a working root alone shows it when its full_fetches still holds a time not after the boundary.
+    record_legacy = getattr(ctx, "legacy_ff", None)
+    if record_legacy is None:
+        doc, err = ctx.rv.load(ctx.rv.state, "collector.json")
+        ff = doc.get("full_fetches") if not err and isinstance(doc, dict) else None
+        record_legacy = isinstance(ff, dict) and any(isinstance(v, str) and rx_legacy(ctx, v) for v in ff.values())
+    pv, lv = full_fetch_sim(runs, record_legacy)
+    _, lw = full_fetch_sim(runs, True)
+    ctx.full_plan = {"runs": {rid: {g: pv[i][g] for g in groups} for i, rid in enumerate(ids)}, "last": lv, "last_with_legacy": lw,
+                     "record_legacy": record_legacy, "groups": groups}
+    return ctx.full_plan
+
+
 def rx_window_start(ctx, rec, sid):
     """17.3: the first period of the window a collecting run requested for the group of `sid`,
-    as an ISO date, or None for a full request (a group with an unpublished series, a Sunday ET
-    run, H.6)."""
+    as an ISO date, or None for a full request (a group with an unpublished series, H.6, or a
+    Sunday ET run before the group's first successful full fetch that day, v0.7)."""
     st = ctx.st
     if not is_time(rec.get("started_at")):
         return None
     grp = request_group_of(st)
-    members = [s for s in st.series if grp[s] == grp[sid]]
-    today = et_date(parse_utc(rec["started_at"]))
-    before = rx_state_at(ctx, rec["started_at"], inclusive=False) or {}
-    if today.weekday() == 6 or any(st.series[s]["frequency"] == "month" for s in members) \
-            or any(not ((before.get("series") or {}).get(s) or {}).get("objects") for s in members):
+    row = rx_full_plan(ctx)["runs"].get(rec.get("id"), {}).get(grp[sid])
+    if row is not None and row["full"]:
         return None
+    if row is None:
+        members = [s for s in st.series if grp[s] == grp[sid]]
+        before = rx_state_at(ctx, rec["started_at"], inclusive=False) or {}
+        if any(st.series[s]["frequency"] == "month" for s in members) or any(not ((before.get("series") or {}).get(s) or {}).get("objects") for s in members):
+            return None
+    today = et_date(parse_utc(rec["started_at"]))
     return (today - dt.timedelta(days=59)).isoformat()
 
 
@@ -7470,11 +7975,13 @@ def rc_due(ctx):
         state = rx_state_at(ctx, rec["started_at"], inclusive=False)
         today = et_date(now)
         due = {}
+        plan_rows = rx_full_plan(ctx)["runs"].get(rec.get("id"), {})
         for g in groups:
             members = [s for s in order if grp[s] == g]
             why = []
-            if today.weekday() == 6:
-                why.append("Sunday (ET)")
+            row = plan_rows.get(g)
+            if row is not None and row["weekly"]:
+                why.append("weekly full fetch due (Sunday ET, no successful full fetch of the group that day yet, v0.7)")
             for sid in members:
                 stt = (state or {}).get("series", {}).get(sid) or {}
                 if not stt.get("objects"):
@@ -7494,7 +8001,7 @@ def rc_due(ctx):
             p.append(f"run {rec.get('id')} at {rec['started_at']}: requested {sorted(req)}, 17.3 makes due {sorted(due)} ({'; '.join(f'{g}: {due[g][0]}' for g in sorted(due))})")
         if rec.get("outcome") == "nothing-due" and due:
             p.append(f"run {rec.get('id')}: nothing-due although {sorted(due)} are due")
-    check("T100 every collecting run requested exactly the groups 17.3 makes due: a series not yet published or held, Sunday (ET), the expected publication time of a series' next unseen period (skipping documented gaps; the earliest reading of an unknown zone, 21:15 UTC for Fiscal Data) not after now, or an EFFR publication day (4.5, 14.2, 17.3)", p,
+    check("T100 every collecting run requested exactly the groups 17.3 makes due: a series not yet published or held, the weekly full fetch (Sunday ET, once per group per Sunday: no successful full fetch of the group that ET date yet, v0.7), the expected publication time of a series' next unseen period (skipping documented gaps; the earliest reading of an unknown zone, 21:15 UTC for Fiscal Data) not after now, or an EFFR publication day (4.5, 14.2, 17.3)", p,
           f"{n} run(s)" + (f"; {len(skipped)} without per-series outcomes not recomputable: {', '.join(skipped[:3])}" if skipped else ""))
 
 
@@ -7537,9 +8044,11 @@ def rc_windowed(ctx):
         outcomes = rec.get("series") or {}
         locks_b = rx_locks_at(ctx, rec["started_at"], inclusive=False)
         locks_a = rx_locks_at(ctx, rec["ended_at"], inclusive=True)
+        plan_rows = rx_full_plan(ctx)["runs"].get(rec.get("id"), {})
         for g in sorted(requested_groups(st, rec)):
             members = [s for s in st.series if grp[s] == g]
-            if today.weekday() == 6 or any(st.series[s]["frequency"] == "month" for s in members) \
+            row = plan_rows.get(g)
+            if (row is not None and row["full"]) or any(st.series[s]["frequency"] == "month" for s in members) \
                     or any(not (before.get("series", {}).get(s) or {}).get("objects") for s in members):
                 continue  # 17.3: the window is full
             for sid in members:
@@ -7584,7 +8093,7 @@ def rc_windowed(ctx):
                 elif b_hold and not a_hold:
                     if before_start(base, start) != before_start(published, start):
                         p.append(f"{w}: the hold was withdrawn as an exact return, but the held candidate's history before the window differs from the published data, so the assembled candidate could not equal it (5, 11.5)")
-    check("T102 windowed candidates (5 v0.6): in a weekday run that requests a 60-day window, the observations before the window come from the held candidate for a held series and from the published observations for every other series, a locked one included (never from a locked candidate); a published series never changes before the window otherwise", p,
+    check("T102 windowed candidates (5 v0.6; v0.7: a later Sunday run is windowed too): in a run that requests a 60-day window, the observations before the window come from the held candidate for a held series and from the published observations for every other series, a locked one included (never from a locked candidate); a published series never changes before the window otherwise", p,
           f"{n} series candidate(s) in windowed runs")
     check("T112 a lock with a locked change before the window's first period stays in force on a windowed run whatever the candidate shows, and its series is not held again; only a request covering every locked change can lift it (5, 11.5 v0.6)", p112,
           f"{n112} lock(s) with a locked change before the window in windowed runs")
@@ -7993,14 +8502,15 @@ ALERT_HEADER_NAMES = ("authorization", "cookie", "set-cookie", "x-api-key", "use
 ALERT_TOKEN_SHAPES = ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_")
 ALERT_FIXED_KEYS = {"retention-decision": "critical", "gate-failed": "critical", "failed-runs": "critical", "recovered-staging": "warning", "alert-text-refused": "critical",
                     "workflow-disabled": "critical", "inactivity": None, "scheduled-run-gap": None, "consecutive-failures": "critical",
-                    "manifest-overdue": None, "series-stale": "warning", "series-held": "warning", "manifest-missing": "critical"}
+                    "manifest-overdue": None, "series-stale": "warning", "series-held": "warning", "manifest-missing": "critical",
+                    "self-check-unavailable": "warning"}  # v0.7 (17.8, 21.3); collect-failed is the issue job's only (21.5), never a ledger key
 ALERT_SERIES_KEYS = {"frozen": "warning", "hold": "critical", "revision-large": "warning", "invalid-series": "critical", "stale": None,
                      "source-gap": "critical", "source-overdue": "warning"}  # 17.8 (v0.4 adds source-gap and source-overdue)
 ALERT_SOURCE_KEYS = {"invalid": "critical", "blocked": "critical", "fetch-failures": "warning",
                      "source-retirement": None, "source-route-check": "warning"}  # 17.8 (v0.4 adds the route alerts)
 COLLECTION_ALERT_HEADS = ("fetch-failures", "blocked", "invalid")  # per source (11.6: none is raised with source-overdue)
 COLLECTION_ALERT_SERIES_HEADS = ("invalid-series", "source-gap")
-ALERT_BUDGET_KEYS = ("published", "archive-month", "object", "file", "manifest", "pins")
+ALERT_BUDGET_KEYS = ("published", "archive-month", "object", "file", "manifest", "pins", "state-store")  # v0.7 adds budget:state-store (21.4)
 
 
 def alert_text_problems(text):
@@ -8204,11 +8714,16 @@ def rc_runs(ctx):
             diff = sorted(k for k in r if not json_equal(r[k], rec.get(k)))
             if diff:
                 p.append(f"status/runs.json run {r.get('id')!r} differs from its run record in {diff}")
-    newest = sorted(records.values(), key=lambda v: str(v.get("started_at")), reverse=True)[:100]
+    # 14.1: quiet runs do not deploy, so status/runs.json holds the newest 100 run records as of the
+    # last run that wrote live/ (a publishing run of any trigger; a restore rebuilds it); the records
+    # of the quiet runs after it are folded in by the next publication (v0.7: most Stage C runs are quiet).
+    by_time = sorted(records.values(), key=lambda v: (str(v.get("started_at")), str(v.get("id"))))
+    last_pub = max((i for i, v in enumerate(by_time) if v.get("outcome") == "published"), default=len(by_time) - 1)
+    newest = list(reversed(by_time[:last_pub + 1]))[:100]
     if {v.get("id") for v in newest} != {r.get("id") for r in runs}:
         only_rec = sorted(str(x) for x in {v.get("id") for v in newest} - {r.get("id") for r in runs})
         only_run = sorted(str(x) for x in {r.get("id") for r in runs} - {v.get("id") for v in newest})
-        p.append(f"status/runs.json is not the newest 100 run records: only in run-records {only_rec[:5]}, only in runs.json {only_run[:5]} (14.1, 17.5 restore)")
+        p.append(f"status/runs.json is not the newest 100 run records up to the last publishing run: only in run-records {only_rec[:5]}, only in runs.json {only_run[:5]} (14.1, 17.5 restore)")
     to_status = {"appended": {"refreshed"}, "revised-expected": {"refreshed"}, "unchanged": {"unchanged"},
                  "not-due": {"carried-forward", "not-yet-published"}, "invalid": {"carried-forward", "not-yet-published"},
                  "failed": {"carried-forward", "not-yet-published"}, "revised-unexpected": {"held", "carried-forward"}}
@@ -8236,7 +8751,7 @@ def rc_runs(ctx):
                     continue  # reading: 17.3 says a locked series with outcome unchanged "is carried forward"
                 if got not in to_status.get(outcome, set()):
                     p.append(f"snapshot {sid_} {series_id}: run outcome {outcome} gives {sorted(to_status.get(outcome, set()))}, the snapshot says {got} (8, 17.3)")
-    check("T73 run records: one per run at archive/state/run-records/<run id>.json with the 14.1 fields (runs/2: absences, outcome refused) and pruned, valid alert keys, run ids in the 17.2 form; a refused record is a review run with snapshot null and no absences; a rollback or restore record names the snapshot the manifest names afterwards; status/runs.json equals the newest of them; every snapshot's run is recorded as published and its series outcomes give the snapshot statuses of 8; nothing pruned is lost or significant (14.1, 17.1, 17.5, 17.6)", p,
+    check("T73 run records: one per run at archive/state/run-records/<run id>.json with the 14.1 fields (runs/2: absences, outcome refused) and pruned, valid alert keys, run ids in the 17.2 form; a refused record is a review run with snapshot null and no absences; a rollback or restore record names the snapshot the manifest names afterwards; status/runs.json equals the newest of them up to the last publishing run (quiet runs do not deploy); every snapshot's run is recorded as published and its series outcomes give the snapshot statuses of 8; nothing pruned is lost or significant (14.1, 17.1, 17.5, 17.6)", p,
           f"{len(records)} run record(s)")
 
 
@@ -8268,18 +8783,139 @@ def rc_budgets(ctx):
         skip(name, f"the archive holds {arch_total} bytes and the text gives no way to tell from the root alone in which month each file was added (the shape of collector.json is not specified)")
 
 
-def section_root(st, root):
-    global ROOT_MODE
-    ROOT_MODE = True
-    rv = RootView(root)
-    print(f"check_p22.py: pipeline root {rv.root}")
+def rc_full_fetches(ctx):
+    """T116 (v0.7, 17.1, 17.3): collector.json full_fetches against the run records."""
+    rv = ctx.rv
+    name = ("T116 archive/state/collector.json has full_fetches (v0.7): per request group the time (the run's now) of its last successful full fetch, "
+            "recomputed from the run records with the once-per-Sunday rule (a group with an unpublished series, H.6 and the weekly fetch are full); a group never fetched in full successfully has no time; before the boundary of 21.1 also no full_fetches at all (17.1, 17.3, 21.1)")
+    doc, err = rv.load(rv.state, "collector.json")
+    if err or not isinstance(doc, dict):
+        check(name, [f"archive/state/collector.json: {err or 'not an object'}"])
+        return
+    plan = rx_full_plan(ctx)
+    p, notes = [], []
+    newest = max((str(r.get("started_at")) for r in rx_run_records(ctx).values() if is_time(r.get("started_at"))), default=None)
+    before_boundary = newest is not None and rx_legacy(ctx, newest)  # 21.1: not yet rewritten by a run after the promoted dataset
+    # 21.1: written before the boundary, collector.json has no full_fetches (the v0.6 form) or exactly the value the
+    # runs give, counting their full fetches (the v0.7 form); after it, the value carried forward or recomputed exactly.
+    last = plan["last_with_legacy"] if before_boundary else plan["last"]
+    if "full_fetches" not in doc:
+        if before_boundary:
+            notes.append(f"no full_fetches: the state was written before the boundary of 21.1 (the v0.6 form; newest run {newest})")
+        else:
+            p.append(f"collector.json has no full_fetches (17.1 v0.7); its keys are {sorted(doc)}")
+    else:
+        ff = doc["full_fetches"]
+        if not isinstance(ff, dict):
+            p.append(f"full_fetches is {type(ff).__name__}, not an object keyed by request group")
+            ff = {}
+        for g in sorted(set(ff) - set(plan["groups"])):
+            p.append(f"full_fetches names {g!r}, which is not a request group (17.1: keyed by the group's name, effr, debt-total, m1-sa)")
+        for g in plan["groups"]:
+            got = ff.get(g)
+            want = fmt_utc(last[g]) if last.get(g) else None
+            if got is not None and not is_time(got):
+                p.append(f"full_fetches.{g} {got!r} is not a UTC time")
+            elif got != want:
+                p.append(f"full_fetches.{g} is {got!r}; the run records give {want!r} (the now of the last run that fetched the group in full successfully, neither failed nor invalid as a whole; "
+                         + ("counting the runs before the boundary of 21.1, as this collector.json carries them)" if before_boundary or plan["record_legacy"] else "the runs before the boundary of 21.1 kept no full_fetches, so they do not count)"))
+            else:
+                notes.append(f"{g} {got}")
+    check(name, p, "; ".join(notes))
+
+
+def rc_line_endings(ctx):
+    """T117 (v0.7, 21.2, F2): no file the pipeline writes holds a carriage return or a byte order
+    mark; a file that would match its recorded hash after turning CRLF back into LF is named."""
+    rv = ctx.rv
+    snap_sha = {}
+    for _, m, err in ctx.arch_manifests:
+        if not err:
+            ref = m.get("snapshot") or {}
+            snap_sha[ref.get("path")] = ref.get("sha256")
+    p, n, n_conv = [], 0, 0
+    for base in (rv.live, rv.arch, rv.manifests, rv.holds, rv.reviews, rv.rollbacks, rv.state):
+        for f in rv.files(base):
+            data = rv.read(base, f)
+            if data is None:
+                continue
+            n += 1
+            where = f"{rv.name(base)}/{f}"
+            if data.startswith(b"\xef\xbb\xbf"):
+                p.append(f"{where}: starts with a byte order mark (21.2: none in any file the pipeline writes)")
+            if b"\r" not in data:
+                continue
+            conv = data.replace(b"\r\n", b"\n")
+            mt = re.search(r"([0-9a-f]{16})\.(?:json|csv)$", f)
+            if mt and (base == rv.holds or RX_OBJECT_PATH.fullmatch(f) or RX_CSV_PATH.fullmatch(f) or RX_LOG_PATH.fullmatch(f)):
+                match = sha256_hex(conv)[:16] == mt.group(1)
+            elif base in (rv.live, rv.arch) and f in snap_sha:
+                match = sha256_hex(conv) == snap_sha[f]
+            elif f.endswith(".json"):
+                try:
+                    match = canonical_problem(conv, load_strict(conv)) is None
+                except Exception:
+                    match = False
+            else:
+                match = False
+            if match and b"\r" not in conv:
+                n_conv += 1
+                p.append(f"{where}: line endings converted (it matches its recorded hash or canonical form only after CRLF is turned back into LF: a checkout made with conversion; clone with core.autocrlf=false, 21.2)")
+            else:
+                n_cr = data.count(b"\r")
+                p.append(f"{where}: {n_cr} carriage return(s) in a file the pipeline writes (21.2: LF only)")
+    check("T117 no file of the root holds a carriage return or a byte order mark (21.2 v0.7: every text file the pipeline writes ends its lines with LF only); a file that matches its address or canonical form only after CRLF is turned back into LF is named 'line endings converted'", p,
+          f"{n} files")
+
+
+def rc_alert_keys_v07(ctx):
+    """T118 (v0.7, 17.8, 21.3, 21.4, 21.5): the new keys and the one that never enters a ledger."""
+    rv, p = ctx.rv, []
+    doc, err = rv.load(rv.state, "alerts.json")
+    opens = doc.get("open") if not err and isinstance(doc, dict) and isinstance(doc.get("open"), list) else []
+    for a in opens:
+        if not isinstance(a, dict):
+            continue
+        k, sev = a.get("key"), a.get("severity")
+        if k == "collect-failed":
+            p.append("alerts.json lists collect-failed; 21.5 raises it from the issue job only and it is never in the ledger, so the next run that writes the store closes it")
+        if k == "self-check-unavailable" and sev != "warning":
+            p.append(f"self-check-unavailable has severity {sev!r}; 21.3 gives a warning")
+        if k == "budget:state-store" and sev not in ("warning", "critical"):
+            p.append(f"budget:state-store has severity {sev!r}; 21.4 gives a warning over 50,000,000 bytes and critical over 100,000,000")
+    n = 0
+    for rec in rx_records_in_time(ctx):
+        n += 1
+        if "collect-failed" in (rec.get("alerts") or []):
+            p.append(f"run record {rec.get('id')} lists collect-failed among its alerts (21.5: from the issue job only)")
+    check("T118 the alert keys of v0.7: self-check-unavailable a warning (21.3), budget:state-store a warning or critical (21.4), and collect-failed never in the ledger nor in a run record (21.5: the issue job's own key) (17.8)", p,
+          f"{len(opens)} open alert(s), {n} run record(s)")
+
+
+SCENARIO_CHECKS = ("T84", "T103", "T104", "T114")  # the checks that follow the table of appendix B (21.3: not in live mode)
+
+
+def root_context(st, rv, legacy_until=None, live=False, quiet=False, legacy_ff=None):
+    """The view of a pipeline root the T checks read (also used by the state modes, 21.4).
+    `legacy_ff`: whether the collector.json written before the boundary of 21.1 carried
+    full_fetches (the state mode reads it from the Stage B folder); None lets T116 infer it."""
     ctx = State()
+    ctx.legacy_ff = legacy_ff
     ctx.st, ctx.rv, ctx.reg_ids = st, rv, set(st.series)
     ctx.obs_cache, ctx.window, ctx.significant, ctx.log_versions, ctx.named_cache, ctx.logs_as_of = {}, None, None, {}, {}, None
-    ctx.run_records, ctx.lock_history = None, None
-    if not rv.root.is_dir():
-        check("T31 the root has live/, archive/files/, archive/manifests/, archive/holds/ and archive/state/ with its state files (17.1)", [f"{rv.root} is not a directory"])
-        return
+    ctx.run_records, ctx.lock_history, ctx.full_plan = None, None, None
+    ctx.legacy_until = legacy_until
+    if legacy_until is None:
+        # 21.1 (v0.7, F10): a working root holds archive/state/accepted.json (the state files are
+        # imported, 21.3); it names the promoted dataset, and the manifests and snapshots whose time
+        # is not after the promoted snapshot's are read by exactly three v0.6 rules (T46, T55, T116).
+        # Without it every rule is strict.
+        acc, acc_err = rv.load(rv.state, "accepted.json")
+        snap = ((acc.get("dataset") or {}).get("snapshot")) if not acc_err and isinstance(acc, dict) else None
+        if is_snapshot_id(snap):
+            ctx.legacy_until = fmt_utc(snapshot_time(snap))
+            if not quiet:
+                print(f"check_p22.py: archive/state/accepted.json names the promoted dataset {snap}: the manifests and snapshots up to {ctx.legacy_until}, and collector.json until a run after it rewrites it, may have the v0.6 or the v0.7 form under the three rules of 21.1 (T46, T55, T116)")
     ctx.snaps = {}
     for f in rv.files(rv.arch):
         mt = RX_SNAPSHOT_PATH.fullmatch(f)
@@ -8293,7 +8929,25 @@ def section_root(st, root):
         if not err and not isinstance(v, dict):
             v, err = None, "not an object"
         ctx.arch_manifests.append((f, v, err))
-    ctx.manifest, manifest_err = rv.load(rv.live, "manifest.json")
+    ctx.manifest, ctx.manifest_err = rv.load(rv.live, "manifest.json")
+    if not ctx.manifest_err and isinstance(ctx.manifest, dict):
+        ctx.cur_id = (ctx.manifest.get("snapshot") or {}).get("id")
+        ctx.cur = ctx.snaps.get(ctx.cur_id)
+    else:
+        ctx.cur_id, ctx.cur = None, None
+    return ctx
+
+
+def section_root(st, root, live=False, rv=None, legacy_until=None, legacy_ff=None):
+    global ROOT_MODE
+    ROOT_MODE = True
+    rv = rv or RootView(root)
+    print(f"check_p22.py: pipeline root {rv.root}" + (" (live mode, 21.3: the appendix B checks T84, T103, T104 and T114 are not run)" if live else ""))
+    if not rv.root.is_dir():
+        check("T31 the root has live/, archive/files/, archive/manifests/, archive/holds/ and archive/state/ with its state files (17.1)", [f"{rv.root} is not a directory"])
+        return None
+    ctx = root_context(st, rv, legacy_until, live, legacy_ff=legacy_ff)
+    manifest_err = ctx.manifest_err
     guarded("T31 to T33 layout", rc_layout, ctx)
     guarded("T34 canonical JSON", rc_canonical, ctx)
     guarded("T35 schemas", rc_schemas, ctx)
@@ -8304,9 +8958,11 @@ def section_root(st, root):
         ctx.manifest, ctx.cur_id, ctx.cur = {}, None, None
         for label, fn in (("T72 to T73 runs", rc_runs), ("T69 review queue", rc_review_queue), ("T70 to T71 alerts", rc_alerts), ("T95 refusals", rc_refusals),
                           ("T98 to T99 absences", rc_absences), ("T100 due groups", rc_due), ("T101 route alerts", rc_route_alerts),
+                          ("T116 full fetches", rc_full_fetches), ("T117 line endings", rc_line_endings), ("T118 alert keys of v0.7", rc_alert_keys_v07),
                           ("T84 appendix B", rc_scenario), ("T103 to T104 appendix B in v0.4", rc_scenario_v04), ("T114 appendix B in v0.5", rc_scenario_v05)):
-            guarded(label, fn, ctx)
-        return
+            if not (live and label.startswith(SCENARIO_CHECKS)):
+                guarded(label, fn, ctx)
+        return ctx
     ctx.cur_id = (ctx.manifest.get("snapshot") or {}).get("id")
     ctx.cur = ctx.snaps.get(ctx.cur_id)
     for label, fn in (("T36 to T38 live manifest", rc_manifest_live), ("T39 to T41 archived manifests", rc_manifest_archive),
@@ -8319,8 +8975,11 @@ def section_root(st, root):
                       ("T96 publication outcomes", rc_publication_outcomes), ("T97 held candidates kept", rc_candidates_kept), ("T98 to T99 absences", rc_absences),
                       ("T100 due groups", rc_due), ("T101 route alerts", rc_route_alerts), ("T102, T112 windowed candidates", rc_windowed),
                       ("T108 clear", rc_clear), ("T109 locks in the review queue", rc_queue_locks), ("T113 missing versus zero", rc_zero),
+                      ("T116 full fetches", rc_full_fetches), ("T117 line endings", rc_line_endings), ("T118 alert keys of v0.7", rc_alert_keys_v07),
                       ("T84 appendix B", rc_scenario), ("T103 to T104 appendix B in v0.4", rc_scenario_v04), ("T114 appendix B in v0.5", rc_scenario_v05)):
-        guarded(label, fn, ctx)
+        if not (live and label.startswith(SCENARIO_CHECKS)):
+            guarded(label, fn, ctx)
+    return ctx
 
 
 # END ROOT MODE
@@ -8338,13 +8997,41 @@ def compare_mode(collection, out):
     return mod.run(collection, out, ROOT)
 
 
-USAGE = ("usage: python -I tests/datacheck/check_p22.py [--root <dir>]\n"
+def load_helper(file_name, module_name):
+    """A helper beside this file, loaded by its path (python -I keeps this folder off sys.path)."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / file_name
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+USAGE = ("usage: python -I tests/datacheck/check_p22.py [--root <dir> [--live]]\n"
+         "       python -I tests/datacheck/check_p22.py --state <store dir>\n"
+         "       python -I tests/datacheck/check_p22.py --state-scenario <dir>\n"
          "       python -I tests/datacheck/check_p22.py --compare-saved <collection dir> [--compare-out <file.json>]")
 
 
+def run_plain_sections(st, live):
+    """The plain checks: all of them, or in the live modes only those the root checks rest on."""
+    guarded("holiday table", load_holiday_table, st)
+    guarded("canonical JSON", section_canonical, st)
+    guarded("schemas", section_schemas, st)
+    if not live:
+        guarded("tree", section_tree, st)
+    guarded("registry", section_registry, st)
+    guarded("holiday table and known gaps", section_holidays, st)
+    if not live:
+        guarded("collector fixtures", section_raw_fixtures, st)
+        guarded("source records", section_source_records, st)
+        guarded("facts", section_facts, st)
+        guarded("change points", section_change_points, st)
+
+
 def main(argv=None):
+    global LIVE_MODE
     argv = sys.argv[1:] if argv is None else argv
-    root = None
     if "--compare-saved" in argv:
         opts, rest = {}, list(argv)
         while rest:
@@ -8354,26 +9041,35 @@ def main(argv=None):
             else:
                 print(USAGE)
                 return 2
+        if "--compare-saved" not in opts:
+            print(USAGE)
+            return 2
         return compare_mode(opts["--compare-saved"], opts.get("--compare-out"))
-    if argv[:1] == ["--root"] and len(argv) == 2:
-        root = argv[1]
+    root = state_dir = scenario_dir = None
+    live = False
+    if len(argv) == 2 and argv[0] == "--state":
+        state_dir = argv[1]
+    elif len(argv) == 2 and argv[0] == "--state-scenario":
+        scenario_dir = argv[1]
+    elif argv[:1] == ["--root"] and len(argv) in (2, 3) and argv[2:] in ([], ["--live"]):
+        root, live = argv[1], argv[2:] == ["--live"]
     elif argv:
         print(USAGE)
         return 2
-    print(f"check_p22.py: independent checker for DATA_CONVENTIONS {CONVENTIONS} (repository {ROOT})")
+    LIVE_MODE = live or state_dir is not None or scenario_dir is not None
+    mode = ("live root mode" if live else "state store mode" if state_dir else
+            "state scenario mode" if scenario_dir else "root mode" if root else "plain mode")
+    print(f"check_p22.py: independent checker for DATA_CONVENTIONS {CONVENTIONS}, {mode} (repository {ROOT})")
     st = load_state()
-    guarded("holiday table", load_holiday_table, st)
-    guarded("canonical JSON", section_canonical, st)
-    guarded("schemas", section_schemas, st)
-    guarded("tree", section_tree, st)
-    guarded("registry", section_registry, st)
-    guarded("holiday table and known gaps", section_holidays, st)
-    guarded("collector fixtures", section_raw_fixtures, st)
-    guarded("source records", section_source_records, st)
-    guarded("facts", section_facts, st)
-    guarded("change points", section_change_points, st)
+    run_plain_sections(st, LIVE_MODE)
     if root is not None:
-        guarded("pipeline root", section_root, st, root)
+        guarded("pipeline root", section_root, st, root, live)
+    if state_dir is not None or scenario_dir is not None:
+        cs = load_helper("check_state.py", "rmf_check_state")
+        if state_dir is not None:
+            guarded("state store", cs.run_state, sys.modules[__name__], st, state_dir)
+        else:
+            guarded("state scenario", cs.run_scenario, sys.modules[__name__], st, scenario_dir)
     print(f"SUMMARY {COUNTS['PASS']} PASS, {COUNTS['FAIL']} FAIL, {COUNTS['SKIP']} SKIP")
     return 1 if COUNTS["FAIL"] else 0
 

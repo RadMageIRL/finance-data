@@ -23,7 +23,7 @@ const PIPELINE_DIR = fileURLToPath(new URL('..', import.meta.url));
 const NYP = (at, outcome = 'not-due', error = null) => ({ objects: [], last_period: null, observation_count: 0, status: 'not-yet-published', retrieved_at: null, checked_at: null, attempt: { at, outcome, error }, source_marker: null });
 const category = (status) => (status === 'not-yet-published' ? 'unpublished' : status === 'held' ? 'held' : 'published');
 const emptyQueue = () => ({ schema: 'rmf.econ.review-queue/4', open: [], frozen: [], decisions: [], refusals: [] });
-const emptyCollector = () => ({ schema: 'rmf.econ.collector/1', sources: {}, invalid_series: [], source_gaps: {}, gate_failed: false, archive_bytes_by_month: {}, hold_meta: {} });
+const emptyCollector = () => ({ schema: 'rmf.econ.collector/1', sources: {}, invalid_series: [], source_gaps: {}, gate_failed: false, archive_bytes_by_month: {}, hold_meta: {}, full_fetches: {} });
 /** At most this many undocumented gaps of a series are listed (11.6); the alert gives the count. */
 const MAX_GAPS = 50;
 /** A review's permission must have been read at most this long before it (11.5). */
@@ -128,7 +128,9 @@ const queueLocks = (locks) => locks.map(({ observations: _o, ...e }) => e).sort(
 const snapshotLock = (l) => ({ series: l.series, candidate_sha256: l.candidate_sha256, origin: l.origin, frozen_at: l.frozen_at, reason: l.reason });
 
 function open(o) {
-  if (o.mode !== 'fixture' && o.mode !== 'live') throw new Error('run refused: mode must be "fixture" or "live"');
+  // v0.7 (21.6): mode "operation" is a review, rollback or restore on the private store; it
+  // makes no request, so it needs no collection activation, and a collection never uses it.
+  if (o.mode !== 'fixture' && o.mode !== 'live' && o.mode !== 'operation') throw new Error('run refused: mode must be "fixture", "live" or "operation"');
   if (o.mode === 'live') {
     // A nonpublishing live collection (Stage B, 20) runs only with every collection requirement
     // given; nothing in the pipeline publishes.
@@ -169,7 +171,9 @@ const stateOf = (ctx, id) => ctx.published.snapshot?.series[id] ?? NYP(ctx.now);
 export function dueWindow(ctx, group) {
   const states = group.members.map((s) => [s, stateOf(ctx, s.id)]);
   const unpublished = states.some(([, st]) => st.status === 'not-yet-published');
-  const sunday = weekday(ctx.runEt) === 0;
+  // The weekly full fetch (v0.7): on a Sunday (ET), once per group, until one succeeds that day.
+  const last = ctx.collector.full_fetches?.[group.id];
+  const sunday = weekday(ctx.runEt) === 0 && !(typeof last === 'string' && etDate(last) === ctx.runEt);
   let due = unpublished || sunday || states.some(([, st]) => st.status === 'held');
   if (!due) {
     for (const [s, st] of states) {
@@ -368,6 +372,8 @@ function currentAlerts(ctx, { snapshot, frozen = null, runAlerts, measured, reco
   else if (ctx.pins.pins.length) alerts.push(...budgetAlerts({ publishedBytes: 0, archiveMonthBytes: 0, largestObject: 0, largestFile: 0, manifestBytes: 0 }, ctx.pins.pins.length));
   if (ctx.recovered) alerts.push({ key: 'recovered-staging', severity: 'warning', title: 'A leftover staging folder was removed', body: `${ctx.recovered} staging folder(s) of a run that did not finish were deleted before this run. The live tree was not affected.` });
   if (ctx.o.healthFacts) alerts.push(...healthAlerts(scheduleHealth({ ...ctx.o.healthFacts, now: ctx.now, manifest: ctx.o.healthFacts.manifest ?? null })));
+  // Alerts the caller found (v0.7, 21.3 and 21.4: self-check-unavailable, budget:state-store).
+  for (const a of ctx.o.extraAlerts ?? []) alerts.push(a);
   return alerts;
 }
 
@@ -580,6 +586,8 @@ async function collect(ctx) {
     anyDue = true;
     Object.assign(results, await collectGroup(ctx, g, start));
     for (const m of g.members) results[m.id].start = start;
+    // A full fetch counts when its response was received and read (17.3, v0.7).
+    if (start === null && !g.members.every((s) => ['failed', 'invalid'].includes(results[s.id].outcome))) ctx.collector.full_fetches = { ...(ctx.collector.full_fetches ?? {}), [g.id]: ctx.now };
     // Source state for alerts and failure counts (17.4).
     const src = (ctx.collector.sources[g.source] ??= { consecutive_failures: 0, last_failure: null, blocked: null, invalid: false });
     const outcomes = g.members.map((s) => results[s.id]);
@@ -794,6 +802,7 @@ async function guarded(o, body) {
  * run: { id, attempt, trigger, collector_commit }, fetch, wait, healthFacts?, limits?, faults? }.
  */
 export function runCollector(o) {
+  if (o.mode === 'operation') return Promise.reject(new Error('run refused: a collection runs in mode "fixture" or "live"'));
   return guarded({ wait: async () => {}, ...o }, collect);
 }
 

@@ -1,0 +1,153 @@
+# Operations on the private state store (DATA_CONVENTIONS 21.6), manual only: promote (the
+# one-time promotion of the reviewed Stage B dataset), review (approve, reject or clear), rollback
+# and restore. The account that starts the run must hold one of the registry's review permissions
+# on this repository, read with the run's own token; automation accounts are refused. Every
+# operation is validated by the independent checker before the store is written, and the push is
+# never forced. Nothing is published and no provider is contacted.
+name: operate
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: promote, review, rollback or restore
+        type: choice
+        options: [review, rollback, restore, promote]
+      series:
+        description: review - the series id
+        type: string
+        default: ''
+      candidate:
+        description: review - the held or locked candidate SHA-256
+        type: string
+        default: ''
+      decision:
+        description: review - approve, reject or clear
+        type: choice
+        options: [none, approve, reject, clear]
+        default: none
+      to:
+        description: rollback - the snapshot id to return to
+        type: string
+        default: ''
+      manifest_sha256:
+        description: promote - the reviewed manifest SHA-256
+        type: string
+        default: ''
+      reason:
+        description: Why (required)
+        type: string
+        default: ''
+
+permissions: {}
+
+concurrency:
+  group: collector
+  cancel-in-progress: false
+
+jobs:
+  operate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      wrote: ${{ steps.op.outputs.wrote }}
+      ledger: ${{ steps.op.outputs.ledger }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Read the starting account's permission on this repository
+        id: permission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          permission="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${ACTOR}/permission" --jq .permission)"
+          echo "permission=${permission}" >> "$GITHUB_OUTPUT"
+          echo "checked_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "The starting account's permission: ${permission}"
+      - name: Mint a token for the state store only
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.STATE_APP_ID }}
+          private-key: ${{ secrets.STATE_APP_PRIVATE_KEY }}
+          owner: RadMageIRL
+          repositories: finance-data-state
+          permission-contents: write
+      - name: Check out the state store
+        env:
+          TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          basic="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          echo "::add-mask::${basic}"
+          git init -q -b main state-store
+          git -C state-store remote add origin https://github.com/RadMageIRL/finance-data-state.git
+          git -C state-store config http.https://github.com/.extraheader "AUTHORIZATION: basic ${basic}"
+          refs="$(git -C state-store ls-remote origin)"
+          if printf '%s\n' "$refs" | awk '$2 == "refs/heads/main" { found = 1 } END { exit !found }'; then
+            git -C state-store fetch -q --depth 1 origin main
+            git -C state-store checkout -q -B main FETCH_HEAD
+            echo "state store at $(git -C state-store rev-parse HEAD)"
+          else
+            echo "the state store has no main branch"
+            exit 1
+          fi
+      - name: Commit identity of the app
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          id="$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)"
+          git -C state-store config user.name "${SLUG}[bot]"
+          git -C state-store config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+      - name: Apply the operation, validate with the independent checker, write the store without force
+        id: op
+        env:
+          ACTOR: ${{ github.triggering_actor }}
+          ACTOR_PERMISSION: ${{ steps.permission.outputs.permission }}
+          PERMISSION_CHECKED_AT: ${{ steps.permission.outputs.checked_at }}
+          OPERATION: ${{ inputs.operation }}
+          SERIES: ${{ inputs.series }}
+          CANDIDATE: ${{ inputs.candidate }}
+          DECISION: ${{ inputs.decision }}
+          TO: ${{ inputs.to }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          REASON: ${{ inputs.reason }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          node pipeline/bin/state-op.mjs --op "$OPERATION" --state state-store --root "$RUNNER_TEMP/root" --run "op-${RUN_ID}-${ATTEMPT}" \
+            --series "$SERIES" --candidate "$CANDIDATE" --decision "$DECISION" --to "$TO" --manifest-sha256 "$MANIFEST_SHA256" --reason "$REASON" \
+            --summary "$RUNNER_TEMP/summary.json" --push
+          echo "wrote=true" >> "$GITHUB_OUTPUT"
+          echo "ledger=$(node -e "const s=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));process.stdout.write(Buffer.from(JSON.stringify({ledger:s.ledger})).toString('base64'))" "$RUNNER_TEMP/summary.json")" >> "$GITHUB_OUTPUT"
+          node -e "const s=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));process.stdout.write('| Field | Value |\n|---|---|\n| outcome | '+s.outcome+' |\n| run | '+s.run+' |\n| commit | '+s.commit+' |\n| accepted | '+s.accepted.snapshot+' '+s.accepted.manifest_sha256+' |\n')" "$RUNNER_TEMP/summary.json" >> "$GITHUB_STEP_SUMMARY"
+
+  issues:
+    needs: operate
+    if: needs.operate.outputs.wrote == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Reconcile the alert issues with the ledger the operation wrote
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LEDGER: ${{ needs.operate.outputs.ledger }}
+        run: |
+          printf '%s' "$LEDGER" | base64 -d > "$RUNNER_TEMP/ledger.json"
+          node pipeline/bin/issues.mjs --summary "$RUNNER_TEMP/ledger.json"

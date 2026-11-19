@@ -2,7 +2,7 @@
 // dependencies (the project adds none). Supported: type (one or a list, "integer" included),
 // const, enum, pattern, minLength, maxLength, minimum, maximum, required, properties,
 // patternProperties, additionalProperties (false or a schema), minProperties, items, minItems,
-// maxItems, anyOf, oneOf, and $ref to "#/$defs/<name>" within the same document. Any other
+// maxItems, anyOf, oneOf, not (v0.7), and $ref to "#/$defs/<name>" within the same document. Any other
 // keyword in a schema is an error, so a schema can never silently ask for a check that does
 // not happen. Keywords for one type (pattern, minimum, ...) apply only to values of that type,
 // as JSON Schema defines.
@@ -11,7 +11,7 @@ const KNOWN = new Set([
   '$schema', '$id', '$defs', 'title', 'description',
   'type', 'const', 'enum', 'pattern', 'minLength', 'maxLength', 'minimum', 'maximum',
   'required', 'properties', 'patternProperties', 'additionalProperties', 'minProperties',
-  'items', 'minItems', 'maxItems', 'anyOf', 'oneOf', '$ref',
+  'items', 'minItems', 'maxItems', 'anyOf', 'oneOf', 'not', '$ref',
 ]);
 
 function typeOf(value) {
@@ -104,6 +104,11 @@ function check(schema, value, path, root, errors) {
       return e.length === 0;
     });
     if (!ok) errors.push(`${path}: matches none of anyOf`);
+  }
+  if (schema.not) {
+    const e = [];
+    check(schema.not, value, path, root, e);
+    if (e.length === 0) errors.push(`${path}: matches a schema it must not match`);
   }
   if (schema.oneOf) {
     const passing = schema.oneOf.filter((s) => {

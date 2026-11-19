@@ -4,29 +4,29 @@ The economic data pipeline of RadMage Finance (https://radmagelabs.com/finance/)
 
 ## Status
 
-Controlled integration, stage B. **Private.** Live collection is manual and nonpublishing:
+Stage C: scheduled **private** collection (data conventions v0.7, section 21). **Private.** Nothing is published:
 
-- a live collection runs only when started by hand with the confirmation LIVE while the repository variable `LIVE_COLLECTION_AUTHORIZED` is `true`; it identifies itself as `RadMage Finance (+https://radmagelabs.com/finance/)`;
-- its results go only to the private state repository `RadMageIRL/finance-data-state`, written by a GitHub App limited to that repository (contents write, metadata read) whose key is kept in GitHub's secret storage;
-- no workflow has a schedule;
-- nothing is published (GitHub Pages is not enabled; the publication workflow is disabled), and no result is accepted automatically.
+- the `collect` workflow runs every four hours at :17 UTC; a scheduled run collects only while the repository variables `LIVE_COLLECTION_AUTHORIZED` and `COLLECTION_SCHEDULE_ENABLED` are both `true` (delete either to pause); a manual live run also needs the typed confirmation LIVE; requests identify themselves as `RadMage Finance (+https://radmagelabs.com/finance/)`;
+- every run is validated by the independent checker before the private state repository `RadMageIRL/finance-data-state` is written, through a GitHub App limited to that repository (contents write, metadata read) whose key is kept in GitHub's secret storage; the push is never forced, and one concurrency group keeps writers apart;
+- unexpected changes are held for a person, who decides with the `operate` workflow (review, rollback, restore); alerts are kept as one issue per key, edited and closed, never duplicated;
+- nothing is published: GitHub Pages is not enabled, the publication workflow is disabled, and no public dataset exists.
 
-Each later stage (scheduled collection, publication) needs its own authorization.
+Publication needs its own authorization.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `pipeline/registry/` | The source registry (data conventions v0.6) and the Federal Reserve holiday table |
+| `pipeline/registry/` | The source registry (data conventions v0.7) and the Federal Reserve holiday table |
 | `pipeline/schemas/` | JSON Schemas of every file the pipeline writes |
 | `pipeline/lib/` | The pipeline: pure functions, a file store and the state store, no dependencies, no network code |
 | `pipeline/collectors/` | Provider adapters, which reach a provider only through a transport function, and the live transport |
-| `pipeline/bin/` | `fixture-scenario.mjs` (the 22-step scenario), `collect.mjs`, `rehearse.mjs` |
+| `pipeline/bin/` | `collect.mjs` (fixture and Stage C collection), `state-op.mjs` (promote, review, rollback, restore), `issues.mjs` (alert issues), `fixture-scenario.mjs` and `state-scenario.mjs` (the deterministic scenarios), `rehearse.mjs` |
 | `pipeline/fixtures/` | Saved provider responses and test data (see NOTICE.md) |
 | `tests/unit/pipeline/` | Unit and end-to-end fixture tests (Vitest) |
-| `tests/datacheck/` | The independent checker, written from the specification text alone, with its comparison of a collection against the saved histories (Python standard library) |
-| `tools/datacheck.mjs` | Writes the scenario twice (the bytes must match), runs the checker on it, and runs the comparison self-test |
-| `.github/workflows/` | `ci` (every push), `rehearse` (manual, fixtures), `collect` (manual: fixtures, or one authorized live collection), `publish` (disabled) |
+| `tests/datacheck/` | The independent checker, written from the specification text alone (Python standard library): plain, root, live root, state store and scenario modes, and the comparison with the saved histories |
+| `tools/datacheck.mjs` | Writes both scenarios twice (the bytes must match, and the appendix B tree hash must equal the committed one on every platform) and runs the checker on them |
+| `.github/workflows/` | `ci` (every push), `collect` (scheduled and manual), `operate` (manual), `rehearse` (manual, fixtures), `publish` (disabled) |
 
 ## Running the checks
 

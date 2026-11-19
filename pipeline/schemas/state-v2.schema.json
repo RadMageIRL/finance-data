@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.state/2",
+  "title": "The descriptor of the state store in the v0.7 layout (DATA_CONVENTIONS 21.2)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run",
+    "written_at",
+    "root",
+    "manifest_sha256",
+    "accepted",
+    "files"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.state/2"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,80}$"
+    },
+    "written_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "root": {
+      "const": "root"
+    },
+    "manifest_sha256": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      ]
+    },
+    "accepted": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "snapshot",
+            "manifest_sha256"
+          ],
+          "properties": {
+            "snapshot": {
+              "type": "string",
+              "pattern": "^\\d{8}T\\d{6}Z$"
+            },
+            "manifest_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      ]
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "sha256",
+          "bytes"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^state/[A-Za-z0-9._/-]+$",
+            "not": {
+              "const": "state/STATE.json"
+            }
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

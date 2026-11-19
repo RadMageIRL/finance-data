@@ -1,4 +1,4 @@
-"""Comparison mode of the independent checker: DATA_CONVENTIONS v0.6, section 20.4.
+"""Comparison mode of the independent checker: DATA_CONVENTIONS v0.7, section 20.4 (records of 20.2 v0.7).
 
     python -I tests/datacheck/check_p22.py --compare-saved <collection dir> [--compare-out <file.json>]
 
@@ -13,11 +13,12 @@ the live response; fields that appear or disappear; the latest period and the pu
 collection and the fixtures and writes only the --compare-out file, which may not lie inside the
 collection folder.
 
-Written from the text of DATA_CONVENTIONS v0.6, the registry and the fixtures only; it shares no
-code with the pipeline, nor with the rest of the checker. Python standard library only. Every
-response and fixture is untrusted data: parsed, never executed. Each saved response's SHA-256
-and byte count are checked against its JSON record before it is read; a response that fails is
-refused, never compared. XML with a document type or an entity declaration is refused before
+Written from the text of DATA_CONVENTIONS v0.6 and v0.7, the registry and the fixtures only; it
+shares no code with the pipeline, nor with the rest of the checker. Python standard library only.
+Every response and fixture is untrusted data: parsed, never executed. Each saved response's record
+must have exactly the twelve fields of 20.2 (v0.7, F1) with their types, and its SHA-256 and byte
+count are checked against the saved body before it is read; a response that fails is refused,
+never compared. XML with a document type or an entity declaration is refused before
 parsing; xml.etree never fetches external resources.
 """
 
@@ -36,7 +37,12 @@ from urllib.parse import parse_qsl, urlsplit
 MAX_RESPONSE_BYTES = 64_000_000        # 20.2: at most 64,000,000 bytes per response
 MAX_XML_BYTES = 64 * 1024 * 1024       # 18: a zip member's stated size at most 64 MB before inflating
 MAX_INFLATED_BYTES = 256 * 1024 * 1024  # a bound on a gzip body or fixture after inflating
-RECORD_FIELDS = ("url", "requested_at", "status", "content_type", "content_length", "etag", "last_modified", "date", "bytes", "sha256")  # 20.2
+RECORD_FIELDS = ("n", "host", "url", "requested_at", "status", "content_type", "content_length", "etag", "last_modified", "date",
+                 "bytes", "sha256")  # 20.2 (v0.7, F1): exactly these twelve, each always present
+RECORD_INT_FIELDS = ("n", "status", "bytes")  # 20.2: integers; the others text
+RECORD_HEADER_FIELDS = ("content_type", "content_length", "etag", "last_modified", "date")  # the header text, or null
+RX_UTC_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", re.ASCII)
+RX_JSON_INTEGER = re.compile(r"-?(0|[1-9]\d*)", re.ASCII)
 RX_RESPONSE_FILE = re.compile(r"(\d+)-([A-Za-z0-9](?:[A-Za-z0-9.-]{0,252}))\.(bin|json)", re.ASCII)
 RX_SHA256 = re.compile(r"[0-9a-f]{64}", re.ASCII)
 RX_RELEASE_DATE = re.compile(r"(\d{4})(\d{2})(\d{2})(\**)", re.ASCII)
@@ -346,6 +352,35 @@ def read_registry(path):
     return reg, routes, hosts, h6_names
 
 
+def record_problems(rec, n, host):
+    """20.2 (v0.7, F1): a response record has exactly the twelve fields, each present; n, status
+    and bytes are integers, the five header fields text or null, the others text; n and host are
+    those of its file name. Any problem makes the record invalid, so its response is refused."""
+    out = []
+    missing = [f for f in RECORD_FIELDS if f not in rec]
+    extra = sorted(set(rec) - set(RECORD_FIELDS))
+    if missing:
+        out.append(f"fields missing {missing}")
+    if extra:
+        out.append(f"fields not in 20.2 {extra}")
+    for f in RECORD_INT_FIELDS:
+        if f in rec and not (isinstance(rec[f], Num) and RX_JSON_INTEGER.fullmatch(str(rec[f]))):
+            out.append(f"{f} {jtext(rec[f])} is not an integer")
+    for f in ("host", "url", "requested_at", "sha256"):
+        if f in rec and (not isinstance(rec[f], str) or isinstance(rec[f], Num)):
+            out.append(f"{f} {jtext(rec[f])} is not text")
+    for f in RECORD_HEADER_FIELDS:
+        if f in rec and rec[f] is not None and (not isinstance(rec[f], str) or isinstance(rec[f], Num)):
+            out.append(f"{f} {jtext(rec[f])} is neither text nor null")
+    if isinstance(rec.get("n"), Num) and RX_JSON_INTEGER.fullmatch(str(rec["n"])) and int(rec["n"]) != n:
+        out.append(f"n {rec['n']} is not the file name's {n}")
+    if "host" in rec and rec.get("host") != host:
+        out.append(f"host {jtext(rec.get('host'))} is not the file name's {host!r}")
+    if isinstance(rec.get("requested_at"), str) and not isinstance(rec["requested_at"], Num) and not RX_UTC_TIME.fullmatch(rec["requested_at"]):
+        out.append(f"requested_at {jtext(rec['requested_at'])} is not a UTC time")
+    return out
+
+
 def read_collection(rep, coll, hosts, routes):
     """20.2: responses/<n>-<host>.bin with responses/<n>-<host>.json. Integrity first."""
     rdir = Path(coll) / "responses"
@@ -381,10 +416,12 @@ def read_collection(rep, coll, hosts, routes):
             rep.add("collection", "integrity", where, note=f"{where}.json is not readable JSON ({exc}); the response is refused")
             rep.refused = True
             continue
-        missing = [f for f in RECORD_FIELDS if f not in rec]
-        extra = sorted(set(rec) - set(RECORD_FIELDS))
-        if missing or extra:
-            rep.add("collection", "format", where, note=f"record fields: missing {missing}, not in 20.2 {extra}")
+        bad = record_problems(rec, n, host)
+        if bad:
+            entry["integrity"] = "record invalid"
+            rep.add("collection", "integrity", where, "record", note="; ".join(bad) + " (20.2 v0.7: such a record is invalid); the response is refused, not compared")
+            rep.refused = True
+            continue
         data = fs["bin"].read_bytes()
         want_sha, want_bytes = rec.get("sha256"), rec.get("bytes")
         ok_sha = isinstance(want_sha, str) and RX_SHA256.fullmatch(want_sha) and sha256_hex(data) == want_sha

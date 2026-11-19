@@ -1,6 +1,6 @@
 {
   "schema": "rmf.econ.registry/4",
-  "conventions": "v0.6",
+  "conventions": "v0.7",
   "family": "econ",
   "holiday_table": "fed-holidays.json",
   "family_policy": {

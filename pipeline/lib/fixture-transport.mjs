@@ -77,3 +77,53 @@ export function makeFixtureTransport(state, scripted = {}) {
   transport.calls = [];
   return transport;
 }
+
+/**
+ * The fixture transport as an `https.request` stand-in for the live transport (v0.7 appendix G):
+ * the live transport's checks, headers, records and hashes run exactly as in a live run, and the
+ * answers come from the fixture transport. No network connection is opened.
+ */
+export function fixtureRequest(transport) {
+  return (url, opts, cb) => {
+    const listeners = {};
+    const req = {
+      destroyed: false,
+      on(event, fn) {
+        (listeners[event] ??= []).push(fn);
+        return req;
+      },
+      emit(event, ...args) {
+        for (const fn of listeners[event] ?? []) fn(...args);
+      },
+      setTimeout() {
+        return req;
+      },
+      destroy() {
+        req.destroyed = true;
+      },
+      end() {
+        transport({ url: url.toString(), headers: opts.headers }).then((r) => {
+          if (r.timeout) {
+            req.emit('error', new Error('timeout'));
+            return;
+          }
+          const resListeners = {};
+          const res = {
+            statusCode: r.status,
+            headers: r.headers ?? {},
+            on(event, fn) {
+              (resListeners[event] ??= []).push(fn);
+              return res;
+            },
+            resume() {},
+            destroy() {},
+          };
+          cb(res);
+          for (const fn of resListeners.data ?? []) fn(r.bytes);
+          for (const fn of resListeners.end ?? []) fn();
+        });
+      },
+    };
+    return req;
+  };
+}
