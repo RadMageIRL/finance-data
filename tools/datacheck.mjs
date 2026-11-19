@@ -100,9 +100,29 @@ for (const d of [stateDir, stateTwin]) rmSync(d, { recursive: true, force: true 
 const g = await runStateScenario(stateDir);
 await runStateScenario(stateTwin);
 const stateSame = treeHash(stateDir) === treeHash(stateTwin);
-rmSync(stateTwin, { recursive: true, force: true });
 console.log(`data check: state scenario wrote ${stateDir} (${g.steps.length} steps: ${g.steps.map((s) => s.outcome).join(', ')}); a second run wrote ${stateSame ? 'the same bytes' : 'DIFFERENT bytes'}`);
-if (!stateSame) process.exit(1);
+if (!stateSame) {
+  // Keep the twin and name the files that differ, so the cause can be read.
+  const files = (dir) => {
+    const out = new Map();
+    const walk = (d, rel) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) walk(join(d, e.name), r);
+        else out.set(r, createHash('sha256').update(readFileSync(join(d, e.name))).digest('hex'));
+      }
+    };
+    walk(dir, '');
+    return out;
+  };
+  const x = files(stateDir);
+  const y = files(stateTwin);
+  const differ = [...new Set([...x.keys(), ...y.keys()])].filter((k) => x.get(k) !== y.get(k)).sort();
+  for (const k of differ.slice(0, 20)) console.log(`data check: differs: ${k}`);
+  console.log(`data check: ${differ.length} file(s) differ; the second run is kept in ${stateTwin}`);
+  process.exit(1);
+}
+rmSync(stateTwin, { recursive: true, force: true });
 const sc = spawnSync(run.python, ['-I', join('tests', 'datacheck', 'check_p22.py'), '--state-scenario', stateDir], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 const scCount = /^SUMMARY (\d+) PASS, (\d+) FAIL, (\d+) SKIP$/m.exec(sc.stdout ?? '');
 for (const line of `${sc.stdout ?? ''}`.split(/\r?\n/)) if (line.startsWith('FAIL')) console.log(line);

@@ -385,7 +385,8 @@ export function exportStateV2(root, checkout, { run, writtenAt, record, bodies =
   const from = join(root, 'archive', 'state');
   if (existsSync(from)) cpSync(from, stateDir, { recursive: true });
   writeFileSync(join(checkout, '.gitattributes'), GITATTRIBUTES);
-  const descriptor = describeV2(checkout, { run, writtenAt });
+  // STATE.json is written last (21.2): its time is not before the record's end.
+  const descriptor = describeV2(checkout, { run, writtenAt: writtenAt < full.ended_at ? full.ended_at : writtenAt });
   writeFileSync(join(stateDir, DESCRIPTOR), canonicalJson(descriptor));
   return { descriptor, record: full };
 }
@@ -402,7 +403,7 @@ export function acceptedRecord({ snapshot, manifestSha256, storeCommit, named, c
  * the promotion's collection record, `.gitattributes`, and STATE.json (state/2) last. The Stage B
  * folder stays as it is. `record` is the promotion's collection record without `added`.
  */
-export function promoteStore(checkout, { manifestSha256, storeCommit, checker, verifiedAt, decision, promotedBy, run, now, record }) {
+export function promoteStore(checkout, { manifestSha256, storeCommit, checker, verifiedAt, decision, promotedBy, run, now, record, writtenAt = now }) {
   if (existsSync(join(checkout, STATE_DIR, ACCEPTED))) throw new Error('promotion refused: the store was promoted already');
   const v = verifyState(checkout);
   if (!v.ok || v.fresh) throw new Error(`promotion refused: ${v.fresh ? 'the store is empty' : v.problems.join('; ')}`);
@@ -433,7 +434,8 @@ export function promoteStore(checkout, { manifestSha256, storeCommit, checker, v
   if (validate(schemaNamed('collection'), full).length) throw new Error(`promotion refused: the collection record is invalid (${validate(schemaNamed('collection'), full).slice(0, 3).join('; ')})`);
   writeCanonical(join(checkout, RUNS_DIR, `${run}.json`), full);
   writeFileSync(join(checkout, '.gitattributes'), GITATTRIBUTES);
-  const descriptor = describeV2(checkout, { run, writtenAt: now });
+  // STATE.json is written last (21.2): its time is not before the record's end.
+  const descriptor = describeV2(checkout, { run, writtenAt: writtenAt < record.ended_at ? record.ended_at : writtenAt });
   writeFileSync(join(checkout, STATE_DIR, DESCRIPTOR), canonicalJson(descriptor));
   return { descriptor, accepted, record: full };
 }

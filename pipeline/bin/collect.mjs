@@ -33,7 +33,7 @@ const arg = (name) => {
 const nowIso = () => `${new Date().toISOString().slice(0, 19)}Z`;
 const sleep = (seconds) => new Promise((r) => setTimeout(r, seconds * 1000));
 
-export async function collect({ mode, root, responses = null, state = null, run = 'live-attempt', push = false, env = process.env, transportRequest = undefined, clock = nowIso, wait = sleep, transportClock = () => new Date(), inputs = loadInputs() }) {
+export async function collect({ mode, root, responses = null, state = null, run = 'live-attempt', push = false, env = process.env, transportRequest = undefined, clock = nowIso, wait = sleep, transportClock = () => new Date(), inputs = loadInputs(), timer = () => Date.now() }) {
   if (mode === 'fixture') {
     const { log } = await runScenario(root);
     return { outcome: 'fixture-scenario', steps: log.length, outcomes: log.map((l) => l.outcome) };
@@ -63,9 +63,10 @@ export async function collect({ mode, root, responses = null, state = null, run 
   const fetch = adapterFetch({ registry: inputs.registry, transport, wait });
   // The root continues from the state store's newest unpublished root (an empty root the first time).
   if (!verified.fresh) importState(state, root);
-  const started = Date.now();
+  // The run's duration in the Stage B summary (a scenario passes a fixed timer: the same bytes).
+  const started = timer();
   const result = await runCollector({ root, mode: 'live', activationFacts: facts, registry: inputs.registry, schemas: inputs.schemas, sourceTable: inputs.sourceTable, holidays: inputs.holidays, now: clock(), run: { id: run, attempt: 1, trigger: 'manual', collector_commit: env.GITHUB_SHA ?? '0'.repeat(40) }, fetch, wait });
-  const seconds = Math.round((Date.now() - started) / 1000);
+  const seconds = Math.round((timer() - started) / 1000);
   // Provenance (20.2): every saved response must still match its recorded hash.
   if (responses) {
     for (const r of recorded) {

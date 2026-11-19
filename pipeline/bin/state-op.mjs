@@ -68,6 +68,8 @@ function operationRecord({ run, operation, startedAt, endedAt, outcome, checker,
 
 /** The current commit of a git checkout, or 40 zeros for a plain folder (the scenario). */
 const headOf = (dir) => {
+  // Only the store's own repository counts (a plain folder inside another checkout has none).
+  if (!existsSync(join(dir, '.git'))) return '0'.repeat(40);
   const r = spawnSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
   return r.status === 0 && /^[0-9a-f]{40}$/.test(r.stdout.trim()) ? r.stdout.trim() : '0'.repeat(40);
 };
@@ -107,7 +109,7 @@ export async function operate(o) {
     const checker = validate(o.root);
     if (checker.fail !== 0) throw new Error(`promotion refused: the independent checker found ${checker.fail} failure(s) (${(checker.failures ?? []).join(' | ')})`);
     const record = operationRecord({ run: o.run, operation: 'promote', startedAt: now, endedAt: clock(), outcome: 'promoted', checker, live: join(named, 'live'), inputs, now });
-    const r = promoteStore(o.state, { manifestSha256: o.manifestSha256, storeCommit, checker, verifiedAt: now, decision: o.decision, promotedBy: o.actor, run: o.run, now, record });
+    const r = promoteStore(o.state, { manifestSha256: o.manifestSha256, storeCommit, checker, verifiedAt: now, decision: o.decision, promotedBy: o.actor, run: o.run, now, record, writtenAt: clock() });
     const again = verifyStateV2(o.state);
     if (!again.ok) throw new Error(`promotion not written: the written checkout does not verify (${again.problems.join('; ')})`);
     if (o.validateStore) {

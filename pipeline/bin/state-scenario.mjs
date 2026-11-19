@@ -75,7 +75,7 @@ export async function runStateScenario(dir, { validate = validateRoot } = {}) {
 
   // 1. A manual Stage B collection into an empty store: the saved histories.
   const t1 = '2026-11-16T16:17:00Z';
-  const first = await collect({ mode: 'live', root: fresh(1), responses: join(work, 'g1-responses'), state: store, run: 'g1', env: AUTHORIZED, transportRequest: request(), clock: () => t1, transportClock: () => new Date(t1), wait });
+  const first = await collect({ mode: 'live', root: fresh(1), responses: join(work, 'g1-responses'), state: store, run: 'g1', env: AUTHORIZED, transportRequest: request(), clock: () => t1, transportClock: () => new Date(t1), wait, timer: () => 0 });
   note(1, t1, 'manual', null, first);
   // 2. The promotion, with step 1's manifest SHA-256 (the reviewed dataset).
   const manifestSha256 = createHash('sha256').update(readFileSync(join(store, 'unpublished', 'g1', 'live', 'manifest.json'))).digest('hex');

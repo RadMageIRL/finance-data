@@ -173,6 +173,26 @@ describe('the baseline promotion and the v0.7 store', () => {
   }, 60_000);
 });
 
+describe('the order of writes', () => {
+  it('writes STATE.json last, not before the end of the record, with a clock that advances', async () => {
+    // A clock that moves one second at every reading, as a real run's does.
+    let tick = Date.parse('2026-11-19T06:39:35Z');
+    const clock = () => `${new Date((tick += 1000)).toISOString().slice(0, 19)}Z`;
+    const store = newDir();
+    await collect({ mode: 'live', root: newDir(), responses: newDir(), state: store, run: 'b9', env: AUTH, transportRequest: request(data()).request, clock: () => T1, transportClock: () => new Date(T1), wait: async () => {}, inputs });
+    const msha = sha(readFileSync(join(store, 'unpublished', 'b9', 'live', 'manifest.json')));
+    const now = clock();
+    await operate({ op: 'promote', state: store, root: newDir(), run: 'p9', actor: 'example-maintainer', permission: 'maintain', checkedAt: now, now, clock, validate: passing, inputs, manifestSha256: msha, decision: { brief: 'docs/P26_STAGE_B_ACCEPTANCE_STAGE_C.md', decided_on: '2026-11-19' } });
+    const promoted = json(join(store, 'runs', 'p9.json'));
+    expect(json(join(store, 'state', 'STATE.json')).written_at >= promoted.ended_at).toBe(true);
+    expect(promoted.ended_at > promoted.started_at).toBe(true);
+    await collectStageC({ root: newDir(), state: store, run: 's9', trigger: 'schedule', env: AUTH, transportRequest: request(data()).request, clock, transportClock: () => new Date(tick), wait: async () => {}, validate: passing, inputs });
+    const collected = json(join(store, 'runs', 's9.json'));
+    expect(json(join(store, 'state', 'STATE.json')).written_at >= collected.ended_at).toBe(true);
+    expect(verifyStateV2(store).ok).toBe(true);
+  }, 60_000);
+});
+
 describe('scheduled runs', () => {
   it('an unchanged run adds nothing under root/, a retry accepts nothing twice, and a run id is used once', async () => {
     const s = copyOfBase();
