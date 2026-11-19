@@ -46,6 +46,7 @@ if (!same) process.exit(1);
 let run = null;
 for (const python of ['python', 'python3']) {
   run = spawnSync(python, ['-I', join('tests', 'datacheck', 'check_p22.py'), '--root', root], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  run.python = python;
   if (!run.error) break;
 }
 if (!run || run.error) {
@@ -70,4 +71,15 @@ console.log(`data check: ${count.PASS} passed, ${count.FAIL} failed, ${count.SKI
 for (const id of stillOpen) console.log(`data check: ${id} fails as expected and stays open: ${OPEN[id]}`);
 for (const id of closed) console.log(`data check: ${id} is listed as open but no longer fails; remove it from tools/datacheck.mjs`);
 if (count.PASS === 0) console.log('data check: the checker reported nothing');
-process.exit(unexpected.length || closed.length || count.PASS === 0 ? 1 : 0);
+if (unexpected.length || closed.length || count.PASS === 0) process.exit(1);
+
+// The comparison mode (20.4) against synthetic collections with known edits: it must report
+// exactly those edits, refuse tampered or unsafe responses, and never write into a collection.
+const selfOut = join('local', 'data-out', 'compare-selftest');
+rmSync(selfOut, { recursive: true, force: true });
+const self = spawnSync(run.python, ['-I', join('tests', 'datacheck', 'compare_selftest.py'), selfOut], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const summary = /^SELFTEST (\d+) PASS, (\d+) FAIL/m.exec(self.stdout ?? '');
+for (const line of `${self.stdout ?? ''}`.split(/\r?\n/)) if (line.startsWith('FAIL')) console.log(line);
+if (self.stderr) process.stdout.write(self.stderr);
+console.log(`data check: comparison self-test ${summary ? `${summary[1]} passed, ${summary[2]} failed` : 'reported nothing'}`);
+process.exit(self.status === 0 && summary && summary[2] === '0' && Number(summary[1]) > 0 ? 0 : 1);

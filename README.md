@@ -4,28 +4,29 @@ The economic data pipeline of RadMage Finance (https://radmagelabs.com/finance/)
 
 ## Status
 
-Controlled integration, stage A. **Private.** Fixtures only:
+Controlled integration, stage B. **Private.** Live collection is manual and nonpublishing:
 
-- no request is sent to any data provider (there is no live transport; the pipeline refuses a live run);
+- a live collection runs only when started by hand with the confirmation LIVE while the repository variable `LIVE_COLLECTION_AUTHORIZED` is `true`; it identifies itself as `RadMage Finance (+https://radmagelabs.com/finance/)`;
+- its results go only to the private state repository `RadMageIRL/finance-data-state`, written by a GitHub App limited to that repository (contents write, metadata read) whose key is kept in GitHub's secret storage;
 - no workflow has a schedule;
-- nothing is published (GitHub Pages is not enabled; the publication workflow is disabled).
+- nothing is published (GitHub Pages is not enabled; the publication workflow is disabled), and no result is accepted automatically.
 
-Each later stage (live collection without publication, scheduled collection, publication) needs its own authorization.
+Each later stage (scheduled collection, publication) needs its own authorization.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `pipeline/registry/` | The source registry (data conventions v0.5) and the Federal Reserve holiday table |
+| `pipeline/registry/` | The source registry (data conventions v0.6) and the Federal Reserve holiday table |
 | `pipeline/schemas/` | JSON Schemas of every file the pipeline writes |
-| `pipeline/lib/` | The pipeline: pure functions and a file store, no dependencies, no network code |
-| `pipeline/collectors/` | Provider adapters; they reach a provider only through a transport function |
+| `pipeline/lib/` | The pipeline: pure functions, a file store and the state store, no dependencies, no network code |
+| `pipeline/collectors/` | Provider adapters, which reach a provider only through a transport function, and the live transport |
 | `pipeline/bin/` | `fixture-scenario.mjs` (the 22-step scenario), `collect.mjs`, `rehearse.mjs` |
 | `pipeline/fixtures/` | Saved provider responses and test data (see NOTICE.md) |
 | `tests/unit/pipeline/` | Unit and end-to-end fixture tests (Vitest) |
-| `tests/datacheck/` | The independent checker, written from the specification text alone (Python standard library) |
-| `tools/datacheck.mjs` | Writes the scenario twice (the bytes must match) and runs the checker on it |
-| `.github/workflows/` | `ci` (every push), `rehearse` and `collect` (manual, fixtures only), `publish` (disabled) |
+| `tests/datacheck/` | The independent checker, written from the specification text alone, with its comparison of a collection against the saved histories (Python standard library) |
+| `tools/datacheck.mjs` | Writes the scenario twice (the bytes must match), runs the checker on it, and runs the comparison self-test |
+| `.github/workflows/` | `ci` (every push), `rehearse` (manual, fixtures), `collect` (manual: fixtures, or one authorized live collection), `publish` (disabled) |
 
 ## Running the checks
 

@@ -148,7 +148,7 @@ export function lastSummary(series, observations) {
 /**
  * The manifest (section 9). `parts[id]` = { observations, csvs: [refs with segment and retrieved_at], revisions: [refs] }.
  */
-export function buildManifest({ registry, snapshot, snapshotRef, parts, now, previousSnapshot, rollback, pinned, calendar }) {
+export function buildManifest({ registry, snapshot, snapshotRef, parts, now, previousSnapshot, rollback, locks = null, pinned, calendar }) {
   const series = {};
   const times = {};
   for (const s of registry.series) {
@@ -157,8 +157,11 @@ export function buildManifest({ registry, snapshot, snapshotRef, parts, now, pre
   }
   const heldReason = new Map(snapshot.holds.map((h) => [h.series, h.reason]));
   // The locks in force (11.5): the snapshot's, plus those of the rollback this manifest records.
-  const frozen = new Map((snapshot.frozen ?? []).map((f) => [f.series, { origin: 'rejected', ...f }]));
-  for (const id of rollback?.locked ?? []) frozen.set(id, { series: id, origin: 'rolled-back', frozen_at: rollback.at, reason: rollback.reason });
+  // A rollback passes every lock in force after it (v0.6); otherwise the snapshot's, plus those of
+  // the rollback this manifest records. A series with several locks shows the newest one's reason.
+  const frozen = new Map();
+  for (const f of [...(locks ?? snapshot.frozen ?? [])].sort((a, b) => (a.frozen_at < b.frozen_at ? -1 : 1))) frozen.set(f.series, { origin: 'rejected', ...f });
+  if (!locks) for (const id of rollback?.locked ?? []) if (!frozen.has(id)) frozen.set(id, { series: id, origin: 'rolled-back', frozen_at: rollback.at, reason: rollback.reason });
   const staleOf = (s) => {
     const t = s.staleness.follows !== undefined ? times[s.staleness.follows] : times[s.id];
     return t ? now >= t.staleAt : false;

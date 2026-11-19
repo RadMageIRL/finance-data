@@ -318,11 +318,11 @@ describe('whole-candidate safeguards', () => {
 });
 
 describe('activation guard', () => {
-  it('lists what blocks live collection today, with the holiday table no longer among them', () => {
-    const problems = activationProblems({ pipelineDir: 'pipeline' });
-    expect(problems[0]).toBe('there is no live transport: live network collection is not written and not authorized');
-    expect(problems).toContain('live collection is not authorized (stage B)');
-    expect(problems).toContain('there is no durable private state store (finance-data-state is not created)');
-    expect(problems.length).toBe(6);
+  it('lists what blocks a live collection and, separately, publication (v0.6)', () => {
+    const collect = activationProblems({ pipelineDir: 'pipeline' });
+    expect(collect).toEqual(['the live transport is not given as present', 'live collection is not authorized (the LIVE_COLLECTION_AUTHORIZED variable and the manual confirmation)', 'there is no verified durable private state store']);
+    expect(activationProblems({ pipelineDir: 'pipeline', liveTransportExists: true, liveCollectionAuthorized: true, stateStoreExists: true })).toEqual([]);
+    const publish = activationProblems({ pipelineDir: 'pipeline', liveTransportExists: true, liveCollectionAuthorized: true, stateStoreExists: true }, 'publish');
+    expect(publish).toEqual(['the data repository is not given as existing', 'publication of economic data is not authorized', 'the Labs route for the data namespace is not authorized']);
   });
 });

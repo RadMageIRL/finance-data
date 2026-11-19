@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent checker for docs/DATA_CONVENTIONS.md v0.5 (RadMage Finance, P2.2 to P2.5).
+"""Independent checker for docs/DATA_CONVENTIONS.md v0.6 (RadMage Finance, P2.2 to P2.5, Stage B).
 
 Written from the spec text, pipeline/schemas/, pipeline/registry/econ.json,
 pipeline/fixtures/ and the saved provider responses and pages under local/research/
@@ -18,10 +18,18 @@ rollback.locked (T107, T52), the new schema ids (S2, S4, T35), missing versus ze
 (R29, F28, SR1, SR6, SR11, T113), client identification (R6, F29), and the 22 steps of
 appendix B (T84, T103, T104, T114).
 
+v0.6 additions (appendix E): rejected locks count new periods, several locks per series, each
+lifting by its own rule, a rollback keeping every rejection lock (C5, T85, T105, T107, T108,
+T109, T115), the window rule for locks (T102, T112), accepted_zeros (R30, C6, S5, SR1, T113),
+rollback records in archive/rollbacks/ (T115, T31, T34, T35), review-queue/4 with one entry
+per lock (T69, T109), the state descriptor (S5), the changed rows 16, 18 and 20 of appendix B
+(T84, T114), and the comparison mode of section 20.4 (compare_saved.py beside this file).
+
 Run from the repository root:
 
     python -I tests/datacheck/check_p22.py
     python -I tests/datacheck/check_p22.py --root <dir>
+    python -I tests/datacheck/check_p22.py --compare-saved <collection dir> [--compare-out <file.json>]
 
 With --root the pipeline root <dir> (section 17.1: live/, archive/files/,
 archive/manifests/, archive/holds/, archive/state/) is verified in addition to the
@@ -108,11 +116,12 @@ SAFE_INT = 2 ** 53 - 1
 
 COUNTS = {"PASS": 0, "FAIL": 0, "SKIP": 0}
 ROOT_MODE = False  # set by --root
-CONVENTIONS = "v0.5"  # 4.1: the version of the text the registry was written for
-REGISTRY_SCHEMA = "rmf.econ.registry/3"  # 4.1
-SCHEMA_IDS = {  # 8, 9, 14.1, 17.5, 4.1 (v0.5, appendix D5, D4, D8)
-    "registry": "rmf.econ.registry/3", "snapshot": "rmf.econ.snapshot/2", "manifest": "rmf.econ.manifest/3",
-    "runs": "rmf.econ.runs/2", "review": "rmf.econ.review/3", "review-queue": "rmf.econ.review-queue/3"}
+CONVENTIONS = "v0.6"  # 4.1: the version of the text the registry was written for
+REGISTRY_SCHEMA = "rmf.econ.registry/4"  # 4.1 (v0.6, appendix E8)
+SCHEMA_IDS = {  # 8, 9, 14.1, 17.5, 4.1, 20.3 (v0.6, appendix E8)
+    "registry": "rmf.econ.registry/4", "snapshot": "rmf.econ.snapshot/2", "manifest": "rmf.econ.manifest/3",
+    "runs": "rmf.econ.runs/2", "review": "rmf.econ.review/3", "review-queue": "rmf.econ.review-queue/4",
+    "rollback": "rmf.econ.rollback/1", "state": "rmf.econ.state/1"}
 FD_DEFAULT_TIME = "21:15"  # 17.3: Fiscal Data's time when no calendar entry has been collected (zone unknown, 4.5)
 REVIEW_PERMISSIONS_ALL = ("admin", "maintain", "write", "triage", "read", "none")  # 11.5
 # 17.5 (v0.5): the refusal rules, each list in the order it is checked.
@@ -720,6 +729,88 @@ def ki_periods(ser):
     return {k["period"] for k in ser.get("known_inconsistencies", [])}
 
 
+RX_GITHUB_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})", re.ASCII)
+
+
+def is_exact_zero(text):
+    """2.3: an amount equal to zero (0, 0.0, 0.00, and their signed forms), read as a decimal, never a float."""
+    return isinstance(text, str) and bool(_DECIMAL_TEXT.fullmatch(text)) and D(text) == 0
+
+
+def accepted_zero_periods(ser, field="value"):
+    """2.3, 4.4 (v0.6): the periods for which the series' accepted_zeros accept an exact zero in `field`."""
+    entries = ser.get("accepted_zeros") if isinstance(ser.get("accepted_zeros"), list) else []
+    return {e.get("period") for e in entries if isinstance(e, dict) and e.get("field") == field and isinstance(e.get("period"), str)}
+
+
+def accepted_zero_problems(ser, entries, today=None):
+    """R30 and C6 (2.3, 4.4, v0.6): what the text refuses in a series' accepted_zeros list.
+    reading: "only on a series whose eras carry refuse_zero" means the era in force for each
+    named period carries refuse_zero true; a period must be one the series can have (its
+    frequency's form, a real date, a New York Fed business day not in known_gaps, since a
+    documented gap has no record to check); and the source can only have been checked for a
+    period that exists, so the period is on or before `checked`."""
+    out = []
+    if not isinstance(entries, list):
+        return [f"accepted_zeros is {type(entries).__name__}, not a list (4.4)"]
+    if not any(isinstance(e, dict) and e.get("refuse_zero") is True for e in ser.get("extract", [])):
+        out.append("accepted_zeros on a series whose eras carry no refuse_zero (4.4: only on such a series)")
+    month = ser.get("frequency") == "month"
+    fmt = r"\d{4}-\d{2}" if month else r"\d{4}-\d{2}-\d{2}"
+    gaps = {g.get("period") for g in ser.get("known_gaps", []) if isinstance(g, dict)}
+    seen = []
+    for i, e in enumerate(entries):
+        w = f"accepted_zeros[{i}]"
+        if not isinstance(e, dict):
+            out.append(f"{w} is not an object")
+            continue
+        if sorted(e) != sorted(ACCEPTED_ZERO_FIELDS):
+            out.append(f"{w} has fields {sorted(e)}; 4.4 gives exactly {list(ACCEPTED_ZERO_FIELDS)}")
+        period = e.get("period")
+        seen.append(period)
+        if not (isinstance(period, str) and re.fullmatch(fmt, period, re.ASCII)):
+            out.append(f"{w}: period {period!r} is not one {ser.get('frequency')} period (2.3: exactly one period, no ranges or patterns)")
+            period = None
+        else:
+            try:
+                d = parse_date(period) if not month else None
+            except ValueError:
+                out.append(f"{w}: period {period!r} is not a calendar date")
+                d, period = None, None
+            if d is not None:
+                if period in gaps:
+                    out.append(f"{w}: period {period} is a documented gap of the series (2.3: no record exists there to accept)")
+                elif not is_business_day(d) and period not in ki_periods(ser):
+                    out.append(f"{w}: period {period} is not a New York Fed business day (3, 6.2)")
+            era = era_for(ser, period) if period else None
+            if period and (era is None or era.get("refuse_zero") is not True):
+                out.append(f"{w}: the era in force for {period} carries no refuse_zero (4.4)")
+        if e.get("field") != "value":
+            out.append(f"{w}: field {e.get('field')!r}; 4.4 gives value")
+        checked = e.get("checked")
+        if not (isinstance(checked, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", checked, re.ASCII)):
+            out.append(f"{w}: checked {checked!r} is not a date")
+            checked = None
+        if not is_str(e.get("evidence")):
+            out.append(f"{w}: evidence is not a text (4.4: the evidence in words)")
+        who = e.get("authorized_by")
+        if not (isinstance(who, str) and RX_GITHUB_LOGIN.fullmatch(who)) or rx_automation_login(who):
+            out.append(f"{w}: authorized_by {who!r} is not a person's GitHub login (4.4, 11.5)")
+        at = e.get("authorized_at")
+        if not is_time(at):
+            out.append(f"{w}: authorized_at {at!r} is not a UTC time to the second (4.4)")
+        elif period and period[:10] > et_date(parse_utc(at)).isoformat()[:len(period)]:
+            out.append(f"{w}: period {period} is after {et_date(parse_utc(at)).isoformat()}, the ET date of authorized_at {at} (2.3, 4.4: never a future observation)")
+        if period and checked and period > checked[:len(period)]:
+            out.append(f"{w}: period {period} is after checked {checked}; the source cannot have shown it (reading of 2.3: confirmed in the source)")
+        if today is not None and is_time(at) and parse_utc(at) > today:
+            out.append(f"{w}: authorized_at {at} is in the future")
+    dup = sorted({str(x) for x in seen if seen.count(x) > 1})
+    if dup:
+        out.append(f"periods {dup} named more than once (4.4: periods unique)")
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Shared state and raw loaders
 # ---------------------------------------------------------------------------
@@ -744,7 +835,8 @@ def load_state():
     st.registry = load_strict(st.registry_bytes)
     st.series = {s["id"]: s for s in st.registry.get("series", []) if isinstance(s, dict) and "id" in s}
     st.schemas = {}
-    for name in ("registry", "object", "snapshot", "manifest", "revisions", "runs", "review", "review-queue", "publications", "pins", "alerts", "holidays"):
+    for name in ("registry", "object", "snapshot", "manifest", "revisions", "runs", "review", "review-queue", "publications", "pins", "alerts", "holidays",
+                 "rollback", "state"):  # v0.6 adds rollback/1 (17.5) and state/1 (20.3)
         st.schemas[name] = load_strict((SCHEMA_DIR / f"{name}.schema.json").read_bytes())
     st.source_records = load_strict((SCHEMA_DIR / "source-records.json").read_bytes())
     st.tree_files = sorted(p for p in TREE.rglob("*") if p.is_file())
@@ -899,14 +991,14 @@ def section_canonical(st):
 
 
 def section_selftests_v05(st):
-    """C4: the v0.5 lock rules of this checker on fixed cases (11.5, 17.3, 17.5), including the
-    adversarial ones: a removed period, a third value, new periods, a change older than the
-    window, and the refusal order with locks."""
+    """C4 (v0.6 lock rules), C5 (several locks per series, the rollback's lock sets, the
+    window rule) and C6 (accepted zeros): this checker's rules on fixed cases, including the
+    adversarial ones (5, 11.5, 17.3, 17.5, 2.3, 4.4)."""
     p = []
 
-    def expect(label, got, want):
+    def expect(label, got, want, bucket=None):
         if got != want:
-            p.append(f"{label}: got {got}, expected {want}")
+            (p if bucket is None else bucket).append(f"{label}: got {got}, expected {want}")
 
     def ob(day, value, **kw):
         o = {"period": f"2026-10-{day:02d}", "value": value, "released": {"date": None, "basis": "not-recorded"}, "flags": []}
@@ -918,40 +1010,66 @@ def section_selftests_v05(st):
     try:
         pub = [ob(1, "1.00"), ob(2, "2.00"), ob(5, "5.00")]
         rej = [ob(1, "1.00"), ob(2, "9.00"), ob(5, "5.00"), ob(6, "6.00")]
-        expect("rejected: a changed value is locked, a new period is not (11.5)", lock_changes(pub, rej, "rejected"), [("2026-10-02", "value")])
-        expect("rolled-back: the new period counts too (11.5 as clarified)", lock_changes(pub, rej, "rolled-back"), [("2026-10-02", "value"), ("2026-10-06", "period")])
-        ch = lock_changes(pub, rej, "rejected")
+        both = [("2026-10-02", "value"), ("2026-10-06", "period")]
+        expect("rejected (v0.6, E1): the new period counts too", lock_changes(pub, rej, "rejected"), both)
+        expect("rolled-back: the new period counts", lock_changes(pub, rej, "rolled-back"), both)
+        ch = lock_changes(pub, rej)
         expect("the source keeps the rejected value with more new periods: carried, the lock stays",
-               bool(lock_carried(rej + [ob(7, "7.00")], rej, ch)), True)
-        expect("the source returns the published value: nothing carried, the lock lifts", lock_carried(pub + [ob(6, "6.00")], rej, ch), [])
-        expect("a delayed revision to a third value: nothing carried, the lock lifts and the candidate is classified afresh (a new hold)",
-               lock_carried([ob(1, "1.00"), ob(2, "7.00"), ob(5, "5.00")], rej, ch), [])
+               lock_stands("rejected", rej + [ob(7, "7.00")], rej, ch), True)
+        expect("the source returns the published value but keeps the rejected new period (appendix B row 16): carried, the lock stays",
+               lock_stands("rejected", pub + [ob(6, "6.00"), ob(7, "7.00")], rej, ch), True)
+        expect("the source returns the published value and drops the rejected new period: nothing carried, the lock lifts",
+               lock_stands("rejected", pub + [ob(7, "7.00")], rej, ch), False)
+        expect("the rejected new period changes to another value: not carried; with the old value back the lock lifts",
+               lock_stands("rejected", pub + [ob(6, "6.50")], rej, ch), False)
+        expect("a delayed revision to a third value, the new period gone: nothing carried, the lock lifts (then a new hold)",
+               lock_stands("rejected", [ob(1, "1.00"), ob(2, "7.00"), ob(5, "5.00")], rej, ch), False)
+        add_only = pub + [ob(6, "6.00")]
+        cha = lock_changes(pub, add_only)
+        expect("a rejection of new periods alone has locked changes (v0.5 had none and lifted at once)", cha, [("2026-10-06", "period")])
+        expect("... and stays while the source keeps them unchanged", lock_stands("rejected", add_only + [ob(7, "7.00")], add_only, cha), True)
+        expect("the rejected new period released ignored: still carried", lock_stands("rejected", pub + [ob(6, "6.00", released={"date": "2026-10-07", "basis": "first-seen"})], add_only, cha), True)
         removed = [ob(1, "1.00"), ob(5, "5.00")]
-        chr_ = lock_changes(pub, removed, "rejected")
+        chr_ = lock_changes(pub, removed)
         expect("a removed period is a locked change of field period", chr_, [("2026-10-02", "period")])
         expect("a candidate still lacking it carries it", bool(lock_carried([ob(1, "1.00"), ob(5, "5.00"), ob(6, "6.00")], removed, chr_)), True)
         expect("a candidate that has it again carries none", lock_carried(pub, removed, chr_), [])
         inserted = [ob(1, "1.00"), ob(2, "2.00"), ob(3, "3.00"), ob(5, "5.00")]
-        chi = lock_changes(pub, inserted, "rejected")
+        chi = lock_changes(pub, inserted)
         expect("a period inserted on or before the last published one is a locked change", chi, [("2026-10-03", "period")])
         expect("reading: it is carried by the same observation, released ignored", bool(lock_carried(pub + [ob(3, "3.00", released={"date": "2026-10-06", "basis": "first-seen"})], inserted, chi)), True)
         expect("reading: not by the same period at another value", lock_carried(pub + [ob(3, "4.00")], inserted, chi), [])
         flag = [ob(1, "1.00"), ob(2, "2.00", flags=["r"]), ob(5, "5.00")]
-        expect("a flag change is a member change", lock_changes(pub, flag, "rejected"), [("2026-10-02", "flags")])
+        expect("a flag change is a member change", lock_changes(pub, flag), [("2026-10-02", "flags")])
         ext = [ob(1, "1.00"), ob(2, "2.00", extra={"p1": "1.90"}), ob(5, "5.00")]
-        expect("an extra field change is extra.<name>", lock_changes(pub, ext, "rejected"), [("2026-10-02", "extra.p1")])
-        # 5 (v0.5): a change older than the window stays carried on weekdays.
+        expect("an extra field change is extra.<name>", lock_changes(pub, ext), [("2026-10-02", "extra.p1")])
+        expect("a lock on a series never published: every period of the locked candidate", lock_changes([], pub), [("2026-10-01", "period"), ("2026-10-02", "period"), ("2026-10-05", "period")])
+        expect("a rolled-back lock stands whatever the source returns", lock_stands("rolled-back", pub, rej, ch), True)
+        # 5 (v0.6, E3): the windowed candidate is assembled over the published data, and a lock with a
+        # locked change before the window's first period stays in force on that run.
         start = "2026-10-04"
         response = [ob(5, "5.00"), ob(6, "6.00")]
-        expect("windowed over the locked candidate (v0.5): the old change is carried, the lock stays", bool(lock_carried(assemble(rej, response, start), rej, ch)), True)
-        expect("windowed over the published data (v0.4, D1): the old change would drop out and the lock lift", lock_carried(assemble(pub, response, start), rej, ch), [])
-        # 17.5: refusal rules and their order.
+        cand = assemble(pub, response, start)
+        expect("windowed over the published data: the old change is not in the candidate", lock_carried(cand, rej, ch), [("2026-10-06", "period")])
+        response2 = [ob(5, "5.00")]
+        cand2 = assemble(pub, response2, start)
+        expect("the candidate carries none of the locked changes, yet a change lies before the window: the lock stands (E3)",
+               (lock_carried(cand2, rej, ch), lock_stands("rejected", cand2, rej, ch, start)), ([], True))
+        expect("the same candidate on a full fetch: the lock lifts", lock_stands("rejected", cand2, rej, ch, None), False)
+        expect("a window that reaches back before every locked change can lift it", lock_stands("rejected", assemble(pub, [ob(2, "2.00"), ob(5, "5.00")], "2026-10-02"), rej, ch, "2026-10-02"), False)
+        expect("reading: the window's first period itself is inside the window", lock_stands("rejected", pub, [ob(5, "9.00")], [("2026-10-05", "value")], "2026-10-05"), False)
+        expect("... and the day before it is not", lock_stands("rejected", pub, [ob(5, "9.00")], [("2026-10-05", "value")], "2026-10-06"), True)
+        expect("windowed over the locked candidate (v0.5, E3 replaced it) would wrongly carry the change and differ before the window",
+               assemble(rej, response, start) != cand, True)
+        # 17.5: refusal rules and their order, with several locks per series (v0.6).
         perms = ["admin", "maintain", "write"]
         now = "2026-11-25T15:00:00Z"
-        locks, held = {"m1-sa": "a" * 64}, {"debt-total": "b" * 64}
+        locks, held = {"m1-sa": {"a" * 64}, "debt-intragov": {"d" * 64, "e" * 64}}, {"debt-total": "b" * 64}
         for label, args, want in (
                 ("clear of a series without a lock", ("clear", "m2-sa", "a" * 64, "x", "maintain", now), "not-locked"),
                 ("clear naming another candidate", ("clear", "m1-sa", "c" * 64, "x", "maintain", now), "stale-candidate"),
+                ("clear naming the second of two locks of a series (v0.6: named by its hash)", ("clear", "debt-intragov", "e" * 64, "x", "maintain", now), None),
+                ("clear naming the hash of another series' lock", ("clear", "debt-intragov", "a" * 64, "x", "maintain", now), "stale-candidate"),
                 ("clear by a reader", ("clear", "m1-sa", "a" * 64, "x", "read", now), "permission"),
                 ("clear with the permission read 3,601 s before", ("clear", "m1-sa", "a" * 64, "x", "maintain", "2026-11-25T13:59:59Z"), "permission-time"),
                 ("clear with the permission read 3,600 s before (both ends included)", ("clear", "m1-sa", "a" * 64, "x", "maintain", "2026-11-25T14:00:00Z"), None),
@@ -966,7 +1084,90 @@ def section_selftests_v05(st):
             expect(f"refusal: {label}", got, want)
     except Exception as exc:
         p.append(f"{type(exc).__name__}: {exc}")
-    check("C4 lock rules self-test: locked changes per origin (a rejected lock leaves new periods out, a rolled-back one counts them), carrying a locked change (removed, inserted, changed member, flags, extras), the lift on a third value or a return, the windowed candidate over the locked candidate (D1), and the refusal rules for clear and for a locked series in the order of 17.5 (5, 11.5, 17.5)", p)
+    check("C4 lock rules self-test (v0.6): locked changes count new periods for both origins (E1), so rejected additions stay locked while the source keeps them; carrying a locked change (removed, inserted, changed member, flags, extras, released ignored); the lift on a third value or a return; the windowed candidate over the published data with a locked change before the window keeping the lock (E3); the refusal rules for clear and locked series in the order of 17.5 (5, 11.5, 17.5)", p)
+
+    p = []
+    try:
+        def lk(sid, origin, h):
+            return {"series": sid, "origin": origin, "candidate_sha256": h * 64, "frozen_at": "2026-11-18T14:30:00Z", "reason": "r"}
+
+        def keyed(*es):
+            return {lock_key(e): e for e in es}
+        a_rej, b_rej, c_rb = lk("debt-intragov", "rejected", "a"), lk("debt-intragov", "rejected", "b"), lk("debt-intragov", "rolled-back", "c")
+        locks = keyed(a_rej, b_rej, c_rb)
+        expect("three locks on one series are three locks (11.5 v0.6: series, origin and hash identify a lock)", (len(locks), lock_series(locks)), (3, {"debt-intragov"}))
+        expect("the same entry twice is one lock", len(keyed(a_rej, dict(a_rej))), 1)
+        expect("a series stays locked while any of its locks stands", series_after_lifts({lock_key(a_rej): False, lock_key(b_rej): True}), "locked")
+        expect("it is classified afresh only when the last lifts", series_after_lifts({lock_key(a_rej): False, lock_key(b_rej): False}), "classify")
+        expect("a rolled-back lock keeps the series locked when a rejected lock of it lifts", series_after_lifts({lock_key(a_rej): False, lock_key(c_rb): lock_stands("rolled-back", [], [], [])}), "locked")
+        # each lifts by its own rule: lock A on 10-02, lock B on the new period 10-06
+        pub = [{"period": "2026-10-01", "value": "1.00"}, {"period": "2026-10-02", "value": "2.00"}]
+        ca = pub[:1] + [{"period": "2026-10-02", "value": "9.00"}]
+        cb = pub + [{"period": "2026-10-06", "value": "6.00"}]
+        cha, chb = lock_changes(pub, ca), lock_changes(pub, cb)
+        cand = pub + [{"period": "2026-10-06", "value": "6.00"}]
+        expect("a candidate with the published 10-02 and the rejected 10-06: A lifts, B stands, the series stays locked",
+               (lock_stands("rejected", cand, ca, cha), lock_stands("rejected", cand, cb, chb), series_after_lifts({"A": lock_stands("rejected", cand, ca, cha), "B": lock_stands("rejected", cand, cb, chb)})),
+               (False, True, "locked"))
+        # rollback lock sets (17.5 v0.6)
+        own = keyed(lk("effr", "rolled-back", "1"), lk("debt-intragov", "rolled-back", "2"))
+        t_rej = lk("debt-total", "rejected", "3")            # in the target's frozen
+        late_rej = lk("debt-intragov", "rejected", "4")      # decided after the target
+        old_rb = lk("m1-sa", "rolled-back", "5")             # an earlier rollback's lock the target does not carry
+        before = keyed(t_rej, late_rej, old_rb)
+        target = keyed(t_rej)
+        kept, required, tolerated = rollback_lock_sets(own, before, target)
+        expect("kept: every rejection lock in force before the rollback, the target's and the later one", set(kept), {lock_key(t_rej), lock_key(late_rej)})
+        expect("the record must list the own locks and the later rejection lock, not the target's", set(required), set(own) | {lock_key(late_rej)})
+        expect("a series changed by the rollback and rejected after the target carries both locks", sorted(k[1] for k in required if k[0] == "debt-intragov"), ["rejected", "rolled-back"])
+        expect("an earlier rollback's lock the target does not carry is tolerated, not required (reading, see the report)", set(tolerated), {lock_key(old_rb)})
+        order = [s["id"] for s in st.registry.get("series", [])]
+        ranks = sorted(required, key=lambda k: (order.index(k[0]), LOCK_ORIGINS.index(k[1])))
+        expect("registry order then origin: effr, then debt-intragov rejected before rolled-back", [(k[0], k[1]) for k in ranks],
+               [("effr", "rolled-back"), ("debt-intragov", "rejected"), ("debt-intragov", "rolled-back")])
+        locked_series = [sid for sid in order if sid in lock_series(required) and sid not in lock_series(target)]
+        expect("rollback.locked: the series of the record's locks the target does not lock, in registry order", locked_series, ["effr", "debt-intragov"])
+        kept2, required2, _ = rollback_lock_sets(own, keyed(t_rej), keyed(t_rej))
+        expect("a rejection lock the target lists stays in the target's frozen, not in the record", (lock_key(t_rej) in required2, set(required2)), (False, set(own)))
+        _, required3, _ = rollback_lock_sets({}, {}, {})
+        expect("a rollback that changes nothing and keeps nothing: an empty record", required3, {})
+    except Exception as exc:
+        p.append(f"{type(exc).__name__}: {exc}")
+    check("C5 several locks per series self-test (v0.6): identity by series, origin and hash; a series locked while any lock stands and classified afresh only when the last lifts; each lock lifting by its own rule; a rollback's record listing its own locks and every rejection lock in force before it (including one decided after its target) that the target does not list, in registry order then origin, and rollback.locked their series (11.5, 12.9, 17.5)", p)
+
+    p = []
+    try:
+        base = json.loads(json.dumps(st.series["debt-intragov"]))
+        az = {"period": "2026-11-10", "field": "value", "checked": "2026-11-19", "evidence": "a saved response", "authorized_by": "example-maintainer", "authorized_at": "2026-11-19T15:00:00Z"}
+        for label, entries, want_ok in (
+                ("one entry with the six fields", [az], True),
+                ("the period on the ET date of authorized_at", [dict(az, period="2026-11-19", checked="2026-11-19")], True),
+                ("authorized at 01:00 UTC, still the previous ET date: a period of that UTC day is after it", [dict(az, period="2026-11-19", checked="2026-11-19", authorized_at="2026-11-19T01:00:00Z")], False),
+                ("a period after the ET date of authorized_at", [dict(az, period="2026-11-20", checked="2026-11-20")], False),
+                ("a period after checked (reading: the source cannot show it)", [dict(az, period="2026-11-12", checked="2026-11-11")], False),
+                ("a range of periods", [dict(az, period="2026-11-01..2026-11-10")], False),
+                ("a month on a business-day series", [dict(az, period="2026-11")], False),
+                ("a Saturday", [dict(az, period="2026-11-14")], False),
+                ("a documented gap", [dict(az, period=(base.get("known_gaps") or [{"period": "2019-04-03"}])[0]["period"])], False),
+                ("a source field instead of value", [dict(az, field="intragov_hold_amt")], False),
+                ("a bot", [dict(az, authorized_by="renovate[bot]")], False),
+                ("github-actions", [dict(az, authorized_by="github-actions")], False),
+                ("a time with an offset", [dict(az, authorized_at="2026-11-19T10:00:00-05:00")], False),
+                ("an empty evidence", [dict(az, evidence="")], False),
+                ("two entries for one period", [az, dict(az, evidence="again")], False),
+                ("an extra field", [dict(az, until="2027-01-01")], False)):
+            got = accepted_zero_problems(base, entries)
+            expect(f"accepted_zeros: {label}", not got, want_ok)
+        effr = json.loads(json.dumps(st.series["effr"]))
+        expect("accepted_zeros on a series without refuse_zero", bool(accepted_zero_problems(effr, [dict(az, period="2026-11-10")])), True)
+        expect("only an exact zero is accepted: 0, 0.0, 0.00 and -0.00 are zero; 0.01 and 'null' are not",
+               [is_exact_zero(x) for x in ("0", "0.0", "0.00", "-0.00", "0.01", "null", "")], [True, True, True, True, False, False, False])
+        ser = dict(base, accepted_zeros=[az])
+        expect("the accepted period and field", (accepted_zero_periods(ser), accepted_zero_periods(ser, "lower")), ({"2026-11-10"}, set()))
+        expect("the accepted zero is stored as the padded number zero", pad_decimal("0", ser["decimals"]), "0.00")
+    except Exception as exc:
+        p.append(f"{type(exc).__name__}: {exc}")
+    check("C6 accepted zeros self-test (v0.6): an entry names one business-day period (no range, pattern or month), field value, on or before the ET date of authorized_at and of checked, not a documented gap, authorized by a person, periods unique, only on a series with refuse_zero; only an exact zero is covered and it is stored as 0.00 (2.3, 4.4)", p)
 
 
 def section_selftests_v04(st):
@@ -1214,8 +1415,11 @@ def section_schemas_v04(st):
                                   publication={"outcome": "withdrawn", "snapshot": "20261117T150000Z"})]), False, "T94")
     n_v04 = n
     p4 = section_schemas_v05_probes(st, probe, rec, dec, q, ref, t, sha)
-    check("S2 the schemas agree with the text on what v0.5 kept from v0.4, under the v0.5 ids: $id and schema const registry/3, snapshot/2, manifest/3, runs/2, review/3, review-queue/3; csvs entries; absences and their kinds; permissions, publication outcomes and refusal rules; registry review policy, unknown zones and route notices (4.1 to 4.5, 9, 11.5, 11.6, 14.1, 17.5; the text wins)", p, f"{n_v04} probes")
-    check("S4 the v0.5 schemas agree with the text on the v0.5 shapes: snapshot frozen[].origin, manifest rollback.locked, the clear decision and its cleared outcome, review-queue frozen entries with origin, reviewer null for a rollback and locked_changes, the refusal rules not-locked and locked, the registry's user_agent, contact and refuse_zero; the v0.4 ids refused (4.3, 4.4, 8, 9, 11.5, 17.5, appendix D)", p4, f"{n - n_v04} probes")
+    n_v05 = n
+    p5 = section_schemas_v06_probes(st, probe, q, t, sha)
+    check("S2 the schemas agree with the text on what v0.6 kept from v0.4, under the v0.6 ids: $id and schema const registry/4, snapshot/2, manifest/3, runs/2, review/3, review-queue/4, rollback/1, state/1; csvs entries; absences and their kinds; permissions, publication outcomes and refusal rules; registry review policy, unknown zones and route notices (4.1 to 4.5, 9, 11.5, 11.6, 14.1, 17.5, 20.3; the text wins)", p, f"{n_v04} probes")
+    check("S4 the schemas agree with the text on the v0.5 shapes v0.6 keeps: snapshot frozen[].origin, manifest rollback.locked, the clear decision and its cleared outcome, review-queue frozen entries with origin, reviewer null for a rollback and locked_changes, the refusal rules not-locked and locked, the registry's user_agent, contact and refuse_zero; the older ids refused (4.3, 4.4, 8, 9, 11.5, 17.5, appendix D)", p4, f"{n_v05 - n_v04} probes")
+    check("S5 the v0.6 schemas agree with the text on the v0.6 shapes: several locks per series in a snapshot and in the queue (one entry per lock), accepted_zeros entries, the rollback record rollback/1, the state descriptor state/1; registry/3 and review-queue/3 refused (4.4, 11.5, 17.5, 20.3, appendix E)", p5, f"{n - n_v05} probes")
     check("S3 where a schema is looser than the text, the rule is enforced by a named check of this checker (listed here as schema findings)", [],
           f"{len(loose)} looser rule(s): " + "; ".join(loose) if loose else "none")
 
@@ -1234,7 +1438,6 @@ def section_schemas_v05_probes(st, probe, rec, dec, q, ref, t, sha):
         probe("a snapshot frozen entry with origin rolled-back (8)", "snapshot", dict(snap, frozen=[dict(fz, origin="rolled-back")]), True, bucket=p4)
         probe("a snapshot frozen entry without origin (8: v0.5 adds it)", "snapshot", dict(snap, frozen=[{k: v for k, v in fz.items() if k != "origin"}]), False, bucket=p4)
         probe("a snapshot frozen entry whose origin 11.5 does not name", "snapshot", dict(snap, frozen=[dict(fz, origin="expired")]), False, bucket=p4)
-        probe("a snapshot listing one series twice under frozen (11.5: one lock per series)", "snapshot", dict(snap, frozen=[fz, dict(fz, origin="rolled-back")]), False, "T44 and T85", bucket=p4)
         probe("a snapshot with the v0.4 schema id rmf.econ.snapshot/1", "snapshot", dict(snap, schema="rmf.econ.snapshot/1"), False, bucket=p4)
         rb = {"from": "20261124T191700Z", "to": "20261119T221700Z", "at": "2026-11-24T20:00:00Z", "reason": "bad release", "locked": ["effr", "m1-sa"]}
         probe("a rollback with locked (9)", "manifest", dict(man, rollback=rb), True, bucket=p4)
@@ -1270,6 +1473,7 @@ def section_schemas_v05_probes(st, probe, rec, dec, q, ref, t, sha):
     probe("an approve refused by not-locked (17.5: that rule refuses only clear)", "review-queue", dict(q, refusals=[dict(ref, refused="not-locked")]), False, "T95", bucket=p4)
     probe("a clear refused by locked (17.5: that rule refuses only approve and reject)", "review-queue", dict(q, refusals=[dict(ref, decision="clear", refused="locked")]), False, "T95", bucket=p4)
     probe("a review queue with the v0.4 schema id rmf.econ.review-queue/2", "review-queue", dict(q, schema="rmf.econ.review-queue/2"), False, bucket=p4)
+    probe("a review queue with the v0.5 schema id rmf.econ.review-queue/3", "review-queue", dict(q, schema="rmf.econ.review-queue/3"), False, bucket=p4)
 
     def reg_with(fn):
         r = json.loads(json.dumps(st.registry))
@@ -1285,6 +1489,7 @@ def section_schemas_v05_probes(st, probe, rec, dec, q, ref, t, sha):
     probe("a browser user_agent (4.3: never a browser's)", "registry", reg_with(set_rq("nyfed-markets", "user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")), False, bucket=p4)
     probe("a user_agent with the URL changed (4.3: exactly)", "registry", reg_with(set_rq("frb-releases", "user_agent", "RadMage Finance (+https://radmagelabs.com/)")), False, bucket=p4)
     probe("a registry with the v0.4 schema id rmf.econ.registry/2", "registry", reg_with(lambda r: r.__setitem__("schema", "rmf.econ.registry/2")), False, bucket=p4)
+    probe("a registry with the v0.5 schema id rmf.econ.registry/3", "registry", reg_with(lambda r: r.__setitem__("schema", "rmf.econ.registry/3")), False, bucket=p4)
 
     def set_era(sid, key, value):
         def fn(r):
@@ -1298,6 +1503,91 @@ def section_schemas_v05_probes(st, probe, rec, dec, q, ref, t, sha):
     probe("refuse_zero dropped from a debt era (2.3)", "registry", reg_with(lambda r: [e.pop("refuse_zero", None) for s in r["series"] if s["id"] == "debt-intragov" for e in s["extract"]]), False, "R29", bucket=p4)
     probe("refuse_zero on the FOMC target, whose lower bound was 0.00 (2.3 names the debt eras only)", "registry", reg_with(set_era("fomc-target", "refuse_zero", True)), False, "R29", bucket=p4)
     return p4
+
+
+ACCEPTED_ZERO_FIELDS = ("period", "field", "checked", "evidence", "authorized_by", "authorized_at")  # 4.4 (v0.6)
+
+
+def section_schemas_v06_probes(st, probe, q, t, sha):
+    """S5: documents the v0.6 text accepts or refuses, against the committed schemas."""
+    p5 = []
+    snap_key = next((k for k in sorted(st.tree_json) if k.startswith("snapshots/")), None)
+    if snap_key is None:
+        p5.append("the example tree has no snapshot to build probes from")
+    else:
+        snap = json.loads(json.dumps(st.tree_json[snap_key]))
+        fz = {"series": "debt-intragov", "candidate_sha256": sha, "origin": "rejected", "frozen_at": t, "reason": "rejected by the reviewer"}
+        # 11.5 (v0.6): a series may carry several locks; a lock is identified by series, origin and candidate hash.
+        probe("a snapshot with a rejected and a rolled-back lock on one series (11.5: several locks per series)", "snapshot",
+              dict(snap, frozen=[fz, dict(fz, origin="rolled-back", candidate_sha256="b" * 64)]), True, bucket=p5)
+        probe("a snapshot with two rejected locks of one series on different candidates (11.5)", "snapshot",
+              dict(snap, frozen=[fz, dict(fz, candidate_sha256="c" * 64)]), True, bucket=p5)
+        probe("a snapshot listing the same lock twice (11.5: series, origin and hash identify a lock)", "snapshot", dict(snap, frozen=[fz, dict(fz)]), False, "T44", bucket=p5)
+    lock = {"series": "debt-intragov", "candidate_sha256": sha, "origin": "rejected", "frozen_at": t, "run": "r14", "reviewer": "example-writer",
+            "reason": "rejected", "affected_periods": ["2026-11-16"], "locked_changes": [{"period": "2026-11-16", "field": "period"}]}
+    probe("a review-queue/4 with one frozen entry per lock, a series twice (17.5 v0.6)", "review-queue",
+          dict(q, frozen=[lock, dict(lock, origin="rolled-back", reviewer=None, run="r18", candidate_sha256="b" * 64)]), True, bucket=p5)
+    probe("a rejected lock whose locked change is a new period (11.5 v0.6: new periods count)", "review-queue", dict(q, frozen=[lock]), True, bucket=p5)
+    probe("the same lock listed twice in the queue (17.5: one entry per lock)", "review-queue", dict(q, frozen=[lock, dict(lock)]), False, "T109", bucket=p5)
+
+    def reg_with(fn):
+        r = json.loads(json.dumps(st.registry))
+        fn(r)
+        return r
+
+    def with_zero(sid, entries):
+        def fn(r):
+            for s in r["series"]:
+                if s["id"] == sid:
+                    s["accepted_zeros"] = entries
+        return fn
+    az = {"period": "2026-11-10", "field": "value", "checked": "2026-11-19", "evidence": "Fiscal Data API response of 2026-11-19 gives \"0.00\" for this record date",
+          "authorized_by": "example-maintainer", "authorized_at": "2026-11-19T15:00:00Z"}
+    probe("an accepted_zeros entry with the six 4.4 fields on a debt series (2.3, 4.4)", "registry", reg_with(with_zero("debt-intragov", [az])), True, bucket=p5)
+    for f in ACCEPTED_ZERO_FIELDS:
+        probe(f"an accepted_zeros entry without {f} (4.4)", "registry", reg_with(with_zero("debt-intragov", [{k: v for k, v in az.items() if k != f}])), False, bucket=p5)
+    probe("an accepted_zeros entry naming a source field instead of value (4.4: field value)", "registry", reg_with(with_zero("debt-intragov", [dict(az, field="intragov_hold_amt")])), False, bucket=p5)
+    probe("an accepted_zeros entry with a range of periods (2.3: no ranges)", "registry", reg_with(with_zero("debt-intragov", [dict(az, period="2026-11-01/2026-11-30")])), False, bucket=p5)
+    probe("an accepted_zeros entry with a pattern (2.3: no patterns)", "registry", reg_with(with_zero("debt-intragov", [dict(az, period="2026-11-*")])), False, bucket=p5)
+    probe("an accepted_zeros entry with an extra field (4: unknown fields fail validation)", "registry", reg_with(with_zero("debt-intragov", [dict(az, until="2027-01-01")])), False, bucket=p5)
+    probe("an accepted_zeros entry authorized by a bot (4.4: the GitHub login of a person)", "registry", reg_with(with_zero("debt-intragov", [dict(az, authorized_by="dependabot[bot]")])), False, bucket=p5)
+    probe("an accepted_zeros entry with authorized_at not in UTC (4.4: the time, UTC)", "registry", reg_with(with_zero("debt-intragov", [dict(az, authorized_at="2026-11-19T10:00:00-05:00")])), False, bucket=p5)
+    probe("an accepted_zeros entry with an empty evidence text (4.4)", "registry", reg_with(with_zero("debt-intragov", [dict(az, evidence="")])), False, bucket=p5)
+    probe("an accepted_zeros period after the ET date of authorized_at (4.4: on or before)", "registry", reg_with(with_zero("debt-intragov", [dict(az, period="2026-11-20")])), False, "R30", bucket=p5)
+    probe("two accepted_zeros entries for one period (4.4: periods unique)", "registry", reg_with(with_zero("debt-intragov", [az, dict(az, evidence="again")])), False, "R30", bucket=p5)
+    probe("accepted_zeros on the EFFR, whose eras carry no refuse_zero (4.4: only on such a series)", "registry", reg_with(with_zero("effr", [dict(az, period="2026-11-10")])), False, "R30", bucket=p5)
+    probe("an accepted_zeros period that is a month on a business-day series (4.4: one period of the series)", "registry", reg_with(with_zero("debt-intragov", [dict(az, period="2026-11")])), False, "R30", bucket=p5)
+    # 17.5 (v0.6): the rollback record.
+    rb = {"schema": SCHEMA_IDS["rollback"], "from": "20261124T191700Z", "to": "20261119T221700Z", "at": "2026-11-24T20:00:00Z", "run": "r18", "reason": "bad release",
+          "locks": [{"series": "effr", "origin": "rolled-back", "candidate_sha256": sha, "locked_changes": [{"period": "2026-11-20", "field": "period"}]},
+                    {"series": "debt-intragov", "origin": "rejected", "candidate_sha256": "b" * 64, "locked_changes": [{"period": "2026-11-16", "field": "period"}]}]}
+    probe("a rollback record with from, to, at, run, reason and locks of both origins (17.5)", "rollback", rb, True, bucket=p5)
+    probe("a rollback record that adds no lock (17.5: locks may be empty)", "rollback", dict(rb, locks=[]), True, bucket=p5)
+    for f in ("from", "to", "at", "run", "reason", "locks"):
+        probe(f"a rollback record without {f} (17.5)", "rollback", {k: v for k, v in rb.items() if k != f}, False, bucket=p5)
+    for f in ("series", "origin", "candidate_sha256", "locked_changes"):
+        probe(f"a rollback record lock without {f} (17.5)", "rollback", dict(rb, locks=[{k: v for k, v in rb["locks"][0].items() if k != f}]), False, bucket=p5)
+    probe("a rollback record lock with frozen_at (17.5 names series, origin, candidate_sha256, locked_changes only)", "rollback", dict(rb, locks=[dict(rb["locks"][0], frozen_at=t)]), False, bucket=p5)
+    probe("a rollback record lock of an origin 11.5 does not name", "rollback", dict(rb, locks=[dict(rb["locks"][0], origin="expired")]), False, bucket=p5)
+    probe("a rollback record whose to is not a snapshot id (17.5: to is the target snapshot)", "rollback", dict(rb, to="2026-11-19T22:17:00Z"), False, bucket=p5)
+    probe("a rollback record whose locks are not in registry order (17.5: registry order then origin)", "rollback", dict(rb, locks=list(reversed(rb["locks"]))), False, "T115", bucket=p5)
+    probe("a rollback record lock whose locked change names a field section 10 does not name", "rollback",
+          dict(rb, locks=[dict(rb["locks"][0], locked_changes=[{"period": "2026-11-20", "field": "colour"}])]), False, "T115", bucket=p5)
+    probe("a rollback record whose run id is not in the 17.2 form", "rollback", dict(rb, run="run 18/x"), False, "T115", bucket=p5)
+    probe("a rollback record with another schema id", "rollback", dict(rb, schema="rmf.econ.rollback/0"), False, bucket=p5)
+    # 20.3 (v0.6): STATE.json.
+    stt = {"schema": SCHEMA_IDS["state"], "run": "stage-b-1", "written_at": "2026-11-20T15:00:00Z", "root": "unpublished/stage-b-1", "manifest_sha256": sha,
+           "files": [{"path": "state/review-queue.json", "sha256": sha, "bytes": 120}, {"path": "state/run-records/stage-b-1.json", "sha256": "b" * 64, "bytes": 900}]}
+    probe("a state descriptor with run, written_at, root, manifest_sha256 and files (20.3)", "state", stt, True, bucket=p5)
+    probe("a state descriptor whose root has no published manifest (20.3: manifest_sha256 null)", "state", dict(stt, manifest_sha256=None), True, bucket=p5)
+    for f in ("run", "written_at", "root", "manifest_sha256", "files"):
+        probe(f"a state descriptor without {f} (20.3)", "state", {k: v for k, v in stt.items() if k != f}, False, bucket=p5)
+    probe("a state descriptor whose root is not under unpublished/ (20.1: candidate data is kept in unpublished/<run id>/)", "state", dict(stt, root="live"), False, bucket=p5)
+    probe("a state descriptor whose root escapes unpublished/ (20.1)", "state", dict(stt, root="unpublished/../state"), False, bucket=p5)
+    probe("a state file outside state/ (20.1: state/ holds the state files)", "state", dict(stt, files=[{"path": "unpublished/x/live/manifest.json", "sha256": sha, "bytes": 1}]), False, bucket=p5)
+    probe("a state file entry without its SHA-256 (20.3)", "state", dict(stt, files=[{"path": "state/review-queue.json", "bytes": 1}]), False, bucket=p5)
+    probe("a state descriptor with a root of null (20.1: a run always commits its root; the text gives no null root)", "state", dict(stt, root=None), False, "no root check (the state store is not in a pipeline root; listed in the report)", bucket=p5)
+    return p5
 
 
 # ---------------------------------------------------------------------------
@@ -1636,10 +1926,12 @@ def expected_absences(st, rec, after, has_record):
                 raise ValueError(f"{sid} {period}: no deadline")
             if now <= dl:
                 return "not-yet-due", bool(has_record(sid, period))
+            # v0.6: a locked series' period present in its frozen candidate is not absent (11.6), also
+            # when this run's fetch failed; like the other such periods it is accepted listed or not.
             if outcome == "failed":
-                return "fetch-failed", False
+                return "fetch-failed", bool(has_record(sid, period))
             if outcome == "invalid":
-                return "response-invalid", False
+                return "response-invalid", bool(has_record(sid, period))
             return "after-deadline", bool(has_record(sid, period))
 
         if s["frequency"] == "business-day":
@@ -2748,6 +3040,18 @@ def section_registry(st):
         return out
     per_series("R29 missing versus zero: every extract era of debt-total, debt-held-public and debt-intragov carries refuse_zero true and no null text but \"null\"; no other series carries refuse_zero (reading: 2.3 and D6 name only the debt eras) (2.3, 4.4)", r_zero)
 
+    def r_accepted(s):
+        return accepted_zero_problems(s, s["accepted_zeros"]) if "accepted_zeros" in s else []
+    n_az = sum(len(s.get("accepted_zeros") or []) for s in series_list if isinstance(s.get("accepted_zeros"), list))
+    probs = []
+    for s in series_list:
+        try:
+            probs += [f"{s['id']}: {x}" for x in r_accepted(s)]
+        except Exception as exc:
+            probs.append(f"{s.get('id')}: {type(exc).__name__}: {exc}")
+    check("R30 accepted_zeros (v0.6): only on a series whose eras carry refuse_zero; each entry exactly period, field value, checked, evidence, authorized_by (a person's login), authorized_at (UTC); one business-day period, not a documented gap, on or before the ET date of authorized_at and on or before checked; periods unique; no ranges or patterns (2.3, 4.4)", probs,
+          f"{n_az} entr{'y' if n_az == 1 else 'ies'} in the committed registry")
+
 
 # ---------------------------------------------------------------------------
 # Source records against the date-bounded schemas (section 5)
@@ -2822,10 +3126,14 @@ def validate_records(st, records, container):
                 f = era.get(k)
                 if f and f in r and str(r[f]) != era.get("null_text"):
                     v = str(r[f])
-                    if era.get("refuse_zero") is True and _DECIMAL_TEXT.fullmatch(v) and D(v) == 0:
+                    # 2.3 (v0.6): an accepted_zeros entry accepts an exact zero for its one period and field.
+                    accepted = k == "value" and is_exact_zero(v) and date in accepted_zero_periods(ser)
+                    if era.get("refuse_zero") is True and is_exact_zero(v) and not accepted:
                         problems.append(f"{date}: {f}={v!r} equals zero, which refuse_zero makes invalid for {ser['id']} (2.3, 11.4: never stored)")
                     if frac_digits(v) > ser["decimals"]:
                         problems.append(f"{date}: {f}={v} has more than {ser['decimals']} fraction digits ({ser['id']}, 5)")
+                    elif accepted:
+                        pass  # reading: an accepted zero is stored (2.3), so the range (min 1.00 for the debt series) cannot refuse it; see the report
                     elif _DECIMAL_TEXT.fullmatch(v) and not (D(ser["range"]["min"]) <= D(v) <= D(ser["range"]["max"])):
                         problems.append(f"{date}: {f}={v} outside the range of {ser['id']} (11.4)")
             for src_f, dst in (era.get("extra") or {}).items():
@@ -3683,6 +3991,7 @@ class RootView:
         self.manifests = self.root / "archive" / "manifests"
         self.holds = self.root / "archive" / "holds"
         self.reviews = self.root / "archive" / "reviews"
+        self.rollbacks = self.root / "archive" / "rollbacks"  # 17.5 (v0.6): the rollback records
         self.state = self.root / "archive" / "state"
         self.staging = self.root / "staging"
         self._bytes, self._json, self._files, self._sets = {}, {}, {}, {}
@@ -3879,10 +4188,10 @@ def rx_significant(ctx):
             base = ctx.snaps.get(rx_base_id(ctx, sid_))
             if rx_hold_set(base) != rx_hold_set(s):
                 why.append("opened, changed or closed a hold")
-            # 17.6 (v0.5): its list of locked series differs from the previous snapshot's.
-            # reading: the previous snapshot is `previous` (8), and the list is the set of series ids.
-            if {e.get("series") for e in s.get("frozen", []) if isinstance(e, dict)} != \
-                    {e.get("series") for e in (ctx.snaps.get(s.get("previous")) or {}).get("frozen", []) if isinstance(e, dict)}:
+            # 17.6: its list of locked series differs from the previous snapshot's. reading (v0.6):
+            # the previous snapshot is `previous` (8), and the list is the set of locks (series,
+            # origin, hash), as 17.3 glosses "the list of locked series changes (a lock added or lifted)".
+            if set(rx_frozen(s)) != set(rx_frozen(ctx.snaps.get(s.get("previous")))):
                 why.append("its list of locked series differs from the previous snapshot's")
             if (s.get("run") or {}).get("trigger") == "review":
                 why.append("trigger review")
@@ -4321,12 +4630,14 @@ def rc_layout(ctx):
         p.append("archive/holds/ is not a folder although a snapshot lists a hold")
     if not rv.reviews.is_dir() and rx_decisions(ctx):
         p.append("archive/reviews/ is not a folder although review-queue.json has decisions")
+    if not rv.rollbacks.is_dir() and any(not e and isinstance(m, dict) and m.get("rollback") is not None for _, m, e in ctx.arch_manifests):
+        p.append("archive/rollbacks/ is not a folder although an archived manifest is a rollback (17.5 v0.6: every rollback leaves a rollback record)")
     for f in ("review-queue.json", "publications.json", "pins.json", "alerts.json", "collector.json"):
         if rv.read(rv.state, f) is None:
             p.append(f"archive/state/{f} missing")
     if not (rv.state / "run-records").is_dir():
         p.append("archive/state/run-records/ is not a folder")
-    check("T31 the root has live/, archive/files/, archive/manifests/, archive/holds/, archive/reviews/ and archive/state/ with its state files (17.1)", p,
+    check("T31 the root has live/, archive/files/, archive/manifests/, archive/holds/, archive/reviews/, archive/rollbacks/ (after a rollback, v0.6) and archive/state/ with its state files (17.1, 17.5)", p,
           "" if rv.holds.is_dir() and rv.reviews.is_dir() else "archive/holds/ or archive/reviews/ absent, accepted because no snapshot lists a hold and no decision was taken")
     left = sorted(x.name for x in rv.staging.iterdir()) if rv.staging.is_dir() else []
     check("T32 no leftover staging content (17.1: removed when the run ends)", [f"staging/{x}" for x in left])
@@ -4349,6 +4660,7 @@ def rx_json_files(ctx):
     out += [(rv.manifests, f, "manifest") for f in rv.files(rv.manifests) if f.endswith(".json")]
     out += [(rv.holds, f, None) for f in rv.files(rv.holds)]
     out += [(rv.reviews, f, "review") for f in rv.files(rv.reviews)]
+    out += [(rv.rollbacks, f, "rollback") for f in rv.files(rv.rollbacks)]  # 17.5 (v0.6)
     out += [(rv.state, f, None) for f in rv.files(rv.state) if f.endswith(".json")]
     return out
 
@@ -4364,7 +4676,7 @@ def rc_canonical(ctx):
         why = canonical_problem(rv.read(base, f), v)
         if why:
             p.append(f"{rv.name(base)}/{f}: {why}")
-    check("T34 every JSON file in live/ and archive/ (files, manifests, holds, reviews, state) is canonical JSON (7, 12.8, 17.1)", p, f"{n} files")
+    check("T34 every JSON file in live/ and archive/ (files, manifests, holds, reviews, rollbacks, state) is canonical JSON (7, 12.8, 17.1; reading: the rollback records of 17.5 like the review records)", p, f"{n} files")
 
 
 def rc_schemas(ctx):
@@ -4399,7 +4711,7 @@ def rc_schemas(ctx):
             p += [f"{where}: {e}" for e in schema_errors(v, schema)[:3]]
         except SchemaKeywordError as exc:
             p.append(f"{where}: validator cannot evaluate: {exc}")
-    check("T35 every JSON file validates against its schema and carries the v0.5 id: objects, snapshots (snapshot/2), manifests (manifest/3), revision logs, status/runs.json (runs/2), status/publications.json, review records (review/3), and state files whose schema id has a schema file (review-queue/3) (8, 9, 12.8, 14.1, 17.5)", p, f"{n} files")
+    check("T35 every JSON file validates against its schema and carries the v0.6 id: objects, snapshots (snapshot/2), manifests (manifest/3), revision logs, status/runs.json (runs/2), status/publications.json, review records (review/3), rollback records (rollback/1), and state files whose schema id has a schema file (review-queue/4) (8, 9, 12.8, 14.1, 17.5)", p, f"{n} files")
 
 
 # --- T36 to T41: manifests ---
@@ -4586,8 +4898,8 @@ def rc_snapshot_state(ctx):
                 p.append(f"{sid_}: lock on {e.get('series')} frozen_at {e['frozen_at']} is after created_at")
         if not isinstance(s.get("frozen"), list):
             p.append(f"{sid_}: no frozen list (8)")
-        elif len({e.get("series") for e in s["frozen"] if isinstance(e, dict)}) != len(s["frozen"]):
-            p.append(f"{sid_}: a series is listed twice under frozen (11.5: one lock per series)")
+        elif len(rx_frozen(s)) != len(s["frozen"]):
+            p.append(f"{sid_}: a lock (series, origin, candidate hash) is listed twice under frozen (11.5 v0.6: a series may carry several locks, each identified by its series, origin and hash)")
         for h in s.get("holds", []):
             if h.get("series") not in ctx.reg_ids:
                 p.append(f"{sid_}: hold on unregistered series {h.get('series')!r}")
@@ -4649,7 +4961,7 @@ def rc_snapshot_state(ctx):
                 p.append(f"{w}: source_marker {marker!r} does not have exactly {sorted(want)} (8)")
             elif "data_release_date" in marker and str(marker["latest_release_date"]) < str(marker["data_release_date"]):
                 p.append(f"{w}: latest_release_date {marker['latest_release_date']} is before data_release_date {marker['data_release_date']} (2.4)")
-    check("T44 every series state follows 8 and 17.2: the not-yet-published fields, objects and segments, last_period, observation_count, times per status, the not-due attempt of a review run, source_marker; a held status has its hold; each frozen entry has series, candidate_sha256, origin rejected or rolled-back, frozen_at not after the run, reason, one per series (8, 11.5)", p,
+    check("T44 every series state follows 8 and 17.2: the not-yet-published fields, objects and segments, last_period, observation_count, times per status, the not-due attempt of a review run, source_marker; a held status has its hold; each frozen entry has series, candidate_sha256, origin rejected or rolled-back, frozen_at not after the run, reason, one per lock (v0.6: several per series allowed) (8, 11.5)", p,
           f"{n} series states in {len(ctx.order)} snapshots")
 
 
@@ -4698,7 +5010,7 @@ def rc_snapshot_chain(ctx):
         base_id = rx_base_id(ctx, sid_)
         base = ctx.snaps.get(base_id)
         if base is not None:
-            changed = rx_hold_set(base) != rx_hold_set(s) or base.get("frozen") != s.get("frozen")
+            changed = rx_hold_set(base) != rx_hold_set(s) or set(rx_frozen(base)) != set(rx_frozen(s))  # 17.3: a lock added or lifted
             for series_id in ctx.reg_ids:
                 a, b = base.get("series", {}).get(series_id, {}), s.get("series", {}).get(series_id, {})
                 if a.get("objects") != b.get("objects") or rx_category(base, series_id) != rx_category(s, series_id):
@@ -4900,7 +5212,8 @@ def rc_manifest_summaries(ctx):
         gen = parse_utc(m["generated_at"])
         gen_year = et_date(gen).year
         logs = rx_logs_as_of(ctx).get(s["id"], {})
-        frozen = rx_locks_of(ctx, m)  # 9, 12.9 (v0.5): the snapshot's frozen plus the manifest's rollback.locked
+        frozen = rx_locks_of(ctx, m)  # 9, 12.9 (v0.6): the snapshot's frozen plus, after a rollback, its record's locks
+        frozen_series = lock_series(frozen) | set(((m.get("rollback") or {}).get("locked") or []) if isinstance(m.get("rollback"), dict) else [])
         state_of = s.get("series", {})
         held = {h.get("series") for h in s.get("holds", [])}
         if set(m.get("series", {})) != ctx.reg_ids:
@@ -4943,11 +5256,13 @@ def rc_manifest_summaries(ctx):
                 want_status = "not-yet-published"
             elif sid in held or state.get("status") == "held":
                 want_status = "held"
-            elif sid in frozen:
+            elif sid in frozen_series:
                 want_status = "frozen"  # 9: held and frozen come before staleness
-                # reading (as in v0.4): status_reason shows the lock's reason, the reviewer's or the rollback's.
-                if not is_str(summ.get("status_reason")) or str(frozen[sid].get("reason")) not in summ["status_reason"]:
-                    p_status.append(f"{w}: status_reason {summ.get('status_reason')!r} does not show the reason of the {frozen[sid].get('origin')} lock {frozen[sid].get('reason')!r} (11.5)")
+                # reading (as in v0.4): status_reason shows the lock's reason, the reviewer's or the rollback's;
+                # v0.6: with several locks, the reason of at least one of them.
+                reasons = [str(e.get("reason")) for e in locks_of_series(frozen, sid) if e.get("reason") is not None]
+                if not is_str(summ.get("status_reason")) or (reasons and not any(r in summ["status_reason"] for r in reasons)):
+                    p_status.append(f"{w}: status_reason {summ.get('status_reason')!r} does not show the reason of a lock of the series {reasons} (11.5)")
             else:
                 stale = rx_stale(ctx, sid, state_of, gen)
                 want_status = None if stale is None else ("stale" if stale else "fresh")
@@ -5006,7 +5321,7 @@ def rc_manifest_summaries(ctx):
         deadlines, missing = [], []
         for sid in sorted(set(state_of) & ctx.reg_ids):
             state = state_of[sid]
-            if state.get("status") == "not-yet-published" or sid in held or sid in frozen or state.get("status") == "held" or "follows" in st.series[sid]["staleness"]:
+            if state.get("status") == "not-yet-published" or sid in held or sid in frozen_series or state.get("status") == "held" or "follows" in st.series[sid]["staleness"]:
                 continue
             dl, why = deadline_for(st, sid, state.get("last_period"), state.get("source_marker"))
             if dl is None:
@@ -5403,9 +5718,14 @@ def rc_safeguards(ctx):
     check("T80 source calendar: no period of a business-day series falls on a Federal Reserve holiday or a weekend unless it is a known inconsistency, and no known_gaps date has an observation (11.4, 3)", p_cal, detail)
 
 
-# --- Locks (v0.5: 5, 8, 9, 11.5, 17.3, 17.5, 17.6): T85, T86, T105 to T111 ---
+# --- Locks (v0.5, v0.6: 5, 8, 9, 11.5, 17.3, 17.5, 17.6): T85, T86, T105 to T112, T115 ---
+#
+# v0.6 (appendix E1, E2, E3, E5): a lock is identified by its series, origin and candidate hash
+# (11.5); a series may carry several, each lifting by its own rule. Lock sets are dicts from
+# (series, origin, candidate_sha256) to the snapshot frozen entry form, in the order listed.
 
 SECTION10_FIELDS = ("value", "lower", "upper", "kind", "effective", "flags", "missing", "released", "starts_before_data", "period")
+RX_ROLLBACK_PATH = re.compile(r"(\d{8}T\d{6}Z)\.json", re.ASCII)
 
 
 def rx_bare(o):
@@ -5413,18 +5733,38 @@ def rx_bare(o):
     return {k: v for k, v in o.items() if k != "released"} if isinstance(o, dict) else o
 
 
-def lock_changes(published, locked, origin):
-    """11.5 (v0.5, as clarified): the locked changes, every member in which the locked
-    candidate differs from the published observations at the time of locking, as sorted
-    (period, field) pairs in the forms of section 10. For a rejected lock a period after the
-    last published period is left out; for a rolled-back lock it counts, as a `period` change."""
+def lock_key(e):
+    """11.5 (v0.6): a lock is identified by its series, origin and candidate hash."""
+    return (e.get("series"), e.get("origin"), e.get("candidate_sha256")) if isinstance(e, dict) else (None, None, None)
+
+
+def lock_series(locks):
+    """The locked series of a lock set (a series is locked while any of its locks stands)."""
+    return {k[0] for k in locks}
+
+
+def lock_shas(locks):
+    """Series id to the set of its locks' candidate hashes."""
+    out = {}
+    for k in locks:
+        out.setdefault(k[0], set()).add(k[2])
+    return out
+
+
+def locks_of_series(locks, sid):
+    return [e for k, e in locks.items() if k[0] == sid]
+
+
+def lock_changes(published, locked, origin=None):
+    """11.5 (v0.6): the locked changes, every member in which the locked candidate differs from
+    the published observations at the time of locking, as sorted (period, field) pairs in the
+    forms of section 10. Every difference counts, for both origins, new periods included (E1):
+    a period the locked candidate has and the published observations lack is a `period` change.
+    `origin` is kept for the callers; v0.6 no longer tells the origins apart here."""
     out = {(k, f) for k, f, _, _ in rx_changes(published, locked)}
-    if origin == "rolled-back":
-        pub = {observation_key(o) for o in published if isinstance(o, dict)}
-        last = max(pub) if pub else None
-        out |= {(observation_key(o), "period") for o in locked
-                if isinstance(o, dict) and observation_key(o) not in pub and (last is None or observation_key(o) > last)}
-    return sorted(out)
+    pub = {observation_key(o) for o in published if isinstance(o, dict)}
+    out |= {(observation_key(o), "period") for o in locked if isinstance(o, dict) and observation_key(o) not in pub}
+    return sorted(out, key=lambda c: (str(c[0]), str(c[1])))
 
 
 def lock_carries(cand_map, lock_map, period, field):
@@ -5455,16 +5795,38 @@ def lock_carried(candidate, locked, changes):
     return [c for c in changes if lock_carries(cm, lm, c[0], c[1])]
 
 
+def lock_stands(origin, candidate, locked, changes, start=None):
+    """11.5, 5 (v0.6): whether a lock is still in force after a collecting run that requested its
+    series and received a valid response. A rolled-back lock always stands (only a clear lifts
+    it). A rejected lock stands when a locked change lies before the window's first period
+    `start` (a windowed run, E3), or when the candidate carries any of its locked changes; it is
+    lifted only when the candidate carries none of them."""
+    if origin != "rejected":
+        return True
+    if start is not None and any(str(c[0]) < start for c in changes):
+        return True
+    return bool(lock_carried(candidate, locked, changes))
+
+
+def series_after_lifts(stands_by_lock):
+    """11.5 (v0.6): `stands_by_lock` maps each lock of one series to whether it stands after the
+    run. The series stays locked while any stands; only when none stands is the candidate
+    classified afresh. Returns 'locked' or 'classify'."""
+    return "locked" if any(stands_by_lock.values()) else "classify"
+
+
 def refusal_rule(decision, series, sha, reviewer, permission, checked_at, now, held, locks, perms):
-    """17.5 (v0.5): the first rule that refuses a review request, or None. held and locks map a
-    series to its held or locked candidate's hash. An empty reason refuses by missing-text but is
-    not kept, so the caller allows missing-text where nothing else fails (T95)."""
+    """17.5 (v0.5, v0.6): the first rule that refuses a review request, or None. `held` maps a
+    series to its held candidate's hash; `locks` maps a series to the set of its locks'
+    candidate hashes (v0.6: a series may carry several locks, and a clear names one by its
+    hash). An empty reason refuses by missing-text but is not kept, so the caller allows
+    missing-text where nothing else fails (T95)."""
     fails = []
     if decision == "clear":
         order = CLEAR_REFUSAL_RULES
         if series not in locks:
             fails.append("not-locked")
-        if sha != locks.get(series):
+        if sha not in (locks.get(series) or ()):
             fails.append("stale-candidate")
     else:
         order = REFUSAL_RULES
@@ -5488,54 +5850,136 @@ def refusal_rule(decision, series, sha, reviewer, permission, checked_at, now, h
 
 
 def rx_frozen(snapshot):
-    return {e.get("series"): e for e in (snapshot or {}).get("frozen", []) if isinstance(e, dict)}
-
-
-def rx_rollback_locks(ctx, m):
-    """17.5 (v0.5): the locks a rollback manifest adds, as snapshot frozen entries: the
-    withdrawn observations (those of rollback.from) as the locked candidate, origin
-    rolled-back, frozen_at the rollback's time, the rollback's reason."""
-    rb = (m or {}).get("rollback") if isinstance(m, dict) else None
-    if not isinstance(rb, dict) or not isinstance(rb.get("locked"), list):
-        return {}
-    frm = ctx.snaps.get(rb.get("from"))
+    """A snapshot's frozen list as a lock set: (series, origin, sha) to its entry (v0.6)."""
     out = {}
-    for sid in rb["locked"]:
-        if not isinstance(sid, str):
-            continue
-        obs = rx_obs(ctx, (((frm or {}).get("series") or {}).get(sid)) or {})
-        out[sid] = {"series": sid, "candidate_sha256": sha256_hex(canon_bytes(obs)), "origin": "rolled-back", "frozen_at": rb.get("at"), "reason": rb.get("reason")}
+    for e in (snapshot or {}).get("frozen", []) or []:
+        if isinstance(e, dict):
+            out.setdefault(lock_key(e), e)
     return out
 
 
+def rx_rollback_record(ctx, m):
+    """17.5 (v0.6): the rollback record of a rollback manifest, archive/rollbacks/<at as
+    YYYYMMDDTHHMMSSZ>.json, as (record or None, error or None, relative path)."""
+    rb = (m or {}).get("rollback") if isinstance(m, dict) else None
+    if not isinstance(rb, dict) or not is_time(rb.get("at")):
+        return None, "the manifest's rollback has no time", None
+    f = snapshot_id_of(parse_utc(rb["at"])) + ".json"
+    v, err = ctx.rv.load(ctx.rv.rollbacks, f)
+    if err:
+        return None, err, f
+    if not isinstance(v, dict) or not isinstance(v.get("locks"), list):
+        return None, "not an object with a locks list", f
+    return v, None, f
+
+
+def rx_rollback_expected(ctx, m, before):
+    """17.5 (v0.6), computed by this checker from the archive alone for a rollback manifest `m`
+    with `before` the locks in force under the manifest it replaced:
+      own: a rolled-back lock for each series whose observations differ between rollback.from
+           and the target, the withdrawn observations as its candidate, its locked changes;
+      kept: every rejection lock in force before the rollback (a rollback never undoes a
+           person's rejection, including one decided after the target);
+      required: own and kept, less the locks the target snapshot's frozen already lists;
+      tolerated: rolled-back locks in force before the rollback that the target does not list.
+    reading: the text keeps every rejection lock and says nothing of an earlier rollback's locks
+    that the target does not carry; a record may list them or not (see the report)."""
+    rb = m.get("rollback") or {}
+    frm, to = ctx.snaps.get(rb.get("from")), ctx.snaps.get(rb.get("to"))
+    order = [s["id"] for s in ctx.st.registry.get("series", [])]
+    own = {}
+    if frm is not None and to is not None:
+        for sid in order:
+            a = rx_obs(ctx, (frm.get("series") or {}).get(sid) or {})
+            b = rx_obs(ctx, (to.get("series") or {}).get(sid) or {})
+            if canon_bytes(a) != canon_bytes(b):
+                e = {"series": sid, "origin": "rolled-back", "candidate_sha256": sha256_hex(canon_bytes(a)), "frozen_at": rb.get("at"),
+                     "reason": rb.get("reason"), "locked_changes": [{"period": x, "field": y} for x, y in lock_changes(b, a)]}
+                own[lock_key(e)] = e
+    kept, required, tolerated = rollback_lock_sets(own, before, rx_frozen(to))
+    return own, kept, required, tolerated
+
+
+def rollback_lock_sets(own, before, target):
+    """17.5 (v0.6), the pure part of rx_rollback_expected (C5 tests it): from the rollback's own
+    locks, the locks in force before it and the target snapshot's frozen, the kept rejection
+    locks, the locks its record must list, and those it may list."""
+    kept = {k: e for k, e in before.items() if k[1] == "rejected"}
+    required = {}
+    for k, e in list(own.items()) + list(kept.items()):
+        if k not in target:
+            required.setdefault(k, e)
+    tolerated = {k: e for k, e in before.items() if k[1] == "rolled-back" and k not in target and k not in required}
+    return kept, required, tolerated
+
+
+def rx_lock_history(ctx):
+    """(manifests in time order as (name, manifest), the lock set in force under each, the
+    index of the first manifest under which each lock is in force, and per manifest how the
+    rollback locks were read). 11.5 (v0.6): the locks in force are the frozen list of the
+    snapshot the manifest names plus, for a rollback manifest, the locks of its rollback
+    record. A rollback manifest without a readable record (a root of an older pipeline) has its
+    locks derived from rollback.locked as v0.5 did, so the other checks still run; T115 fails."""
+    if getattr(ctx, "lock_history", None) is None:
+        ms = [(name, m) for name, m, err in ctx.arch_manifests if not err and isinstance(m, dict)]
+        ls, info, prev = [], [], {}
+        for name, m in ms:
+            locks = dict(rx_frozen(ctx.snaps.get((m.get("snapshot") or {}).get("id"))))
+            rb = m.get("rollback")
+            how = None
+            if isinstance(rb, dict):
+                rec, err, f = rx_rollback_record(ctx, m)
+                if rec is not None:
+                    how = ("record", f)
+                    for x in rec["locks"]:
+                        if not isinstance(x, dict):
+                            continue
+                        k = lock_key(x)
+                        was = prev.get(k) or {}
+                        e = {"series": x.get("series"), "candidate_sha256": x.get("candidate_sha256"), "origin": x.get("origin"),
+                             # reading: a kept lock keeps its frozen_at and reason; a rollback's own lock has the rollback's
+                             "frozen_at": was.get("frozen_at", rb.get("at") if x.get("origin") == "rolled-back" else None),
+                             "reason": was.get("reason", rb.get("reason") if x.get("origin") == "rolled-back" else None),
+                             "locked_changes": x.get("locked_changes")}
+                        locks.setdefault(k, e)
+                else:
+                    how = ("derived from rollback.locked", err)
+                    frm = ctx.snaps.get(rb.get("from"))
+                    for sid in rb.get("locked") or []:
+                        if not isinstance(sid, str):
+                            continue
+                        obs = rx_obs(ctx, (((frm or {}).get("series") or {}).get(sid)) or {})
+                        e = {"series": sid, "candidate_sha256": sha256_hex(canon_bytes(obs)), "origin": "rolled-back", "frozen_at": rb.get("at"), "reason": rb.get("reason")}
+                        locks.setdefault(lock_key(e), e)
+            ls.append(locks)
+            info.append(how)
+            prev = locks
+        first = {}
+        for i, locks in enumerate(ls):
+            for k in locks:
+                first.setdefault(k, i)
+        ctx.lock_history = (ms, ls, first, info)
+    return ctx.lock_history
+
+
 def rx_locks_of(ctx, m):
-    """11.5: the locks in force under a manifest: the frozen list of the snapshot it names plus
-    its rollback.locked. reading: a series the target already locked and the rollback locks
-    again takes the rollback's lock (one lock per series)."""
+    """11.5: the lock set in force under a manifest (an archived one, or the live one)."""
     if not isinstance(m, dict):
         return {}
-    locks = dict(rx_frozen(ctx.snaps.get((m.get("snapshot") or {}).get("id"))))
-    locks.update(rx_rollback_locks(ctx, m))
-    return locks
+    ms, ls, _, _ = rx_lock_history(ctx)
+    for i, (_, x) in enumerate(ms):
+        if x is m:
+            return ls[i]
+    sid_ = (m.get("snapshot") or {}).get("id")
+    for i, (_, x) in enumerate(ms):
+        if x.get("generated_at") == m.get("generated_at") and (x.get("snapshot") or {}).get("id") == sid_:
+            return ls[i]
+    return dict(rx_frozen(ctx.snaps.get(sid_)))
 
 
 def rx_locks_at(ctx, t, inclusive=True):
     _, m = rx_manifest_at(ctx, t, inclusive)
     return rx_locks_of(ctx, m)
-
-
-def rx_lock_history(ctx):
-    """(manifests in time order as (name, manifest), the locks in force under each, and for every
-    (series, candidate) the index of the first manifest under which that lock is in force)."""
-    if getattr(ctx, "lock_history", None) is None:
-        ms = [(name, m) for name, m, err in ctx.arch_manifests if not err and isinstance(m, dict)]
-        ls = [rx_locks_of(ctx, m) for _, m in ms]
-        first = {}
-        for i, locks in enumerate(ls):
-            for sid, e in locks.items():
-                first.setdefault((sid, e.get("candidate_sha256")), i)
-        ctx.lock_history = (ms, ls, first)
-    return ctx.lock_history
 
 
 def rx_lock_candidate(ctx, sid, sha):
@@ -5544,14 +5988,34 @@ def rx_lock_candidate(ctx, sid, sha):
 
 
 def rx_lock_detail(ctx, sid, entry):
-    """(published observations at the time of locking, locked candidate or None, locked changes)."""
-    ms, _, first = rx_lock_history(ctx)
-    i = first.get((sid, entry.get("candidate_sha256")))
+    """(published observations at the time of locking, locked candidate or None, locked changes
+    recomputed by this checker or None). The time of locking is the first manifest under which
+    the lock (series, origin, hash) is in force: a reject's review manifest (the published data
+    is unchanged by a reject) or a rollback manifest (the target's data)."""
+    ms, _, first, _ = rx_lock_history(ctx)
+    i = first.get(lock_key(entry) if entry.get("series") else (sid, entry.get("origin"), entry.get("candidate_sha256")))
     m = ms[i][1] if i is not None else None
     s = ctx.snaps.get(((m or {}).get("snapshot") or {}).get("id")) or {}
     published = rx_obs(ctx, (s.get("series") or {}).get(sid) or {})
     locked = rx_lock_candidate(ctx, sid, entry.get("candidate_sha256"))
-    return published, locked, (lock_changes(published, locked, entry.get("origin")) if locked is not None else None)
+    return published, locked, (lock_changes(published, locked) if locked is not None else None)
+
+
+def rx_window_start(ctx, rec, sid):
+    """17.3: the first period of the window a collecting run requested for the group of `sid`,
+    as an ISO date, or None for a full request (a group with an unpublished series, a Sunday ET
+    run, H.6)."""
+    st = ctx.st
+    if not is_time(rec.get("started_at")):
+        return None
+    grp = request_group_of(st)
+    members = [s for s in st.series if grp[s] == grp[sid]]
+    today = et_date(parse_utc(rec["started_at"]))
+    before = rx_state_at(ctx, rec["started_at"], inclusive=False) or {}
+    if today.weekday() == 6 or any(st.series[s]["frequency"] == "month" for s in members) \
+            or any(not ((before.get("series") or {}).get(s) or {}).get("objects") for s in members):
+        return None
+    return (today - dt.timedelta(days=59)).isoformat()
 
 
 def rx_decisions(ctx):
@@ -5592,105 +6056,128 @@ def rx_automation_login(login):
     return isinstance(login, str) and (login.lower().endswith("[bot]") or login.lower() == "github-actions")
 
 
+def _k16(k):
+    return f"{k[0]} {k[1]} {str(k[2])[:16]}"
+
+
 def rc_locks(ctx):
     """T85 (transitions), T105 (nothing published while locked), T106 (locked candidates kept),
-    T107 (rollback locks), T110 (lock list changes are significant), T111 (locks survive a restore)."""
+    T107 (rollback locks), T110 (lock list changes are significant), T111 (locks survive a
+    restore), T115 (rollback records), all per lock (series, origin, hash) as v0.6 gives."""
     rv = ctx.rv
-    ms, ls, first = rx_lock_history(ctx)
+    ms, ls, first, info = rx_lock_history(ctx)
     decisions, recs = rx_decisions(ctx), rx_run_records(ctx)
-    p85, p105, p106, p107, p110, p111 = [], [], [], [], [], []
-    n_add, n_keep, n_lift, n_auto = 0, 0, 0, 0
+    p85, p105, p106, p107, p110, p111, p115 = [], [], [], [], [], [], []
+    n_add, n_keep, n_lift, n_auto, n_multi = 0, 0, 0, 0, 0
     for i, (name, m) in enumerate(ms):
         locks, prev = ls[i], (ls[i - 1] if i else {})
-        for sid, e in locks.items():
-            if sid not in ctx.reg_ids:
-                p85.append(f"{name}: a lock on {sid!r}, which is not a registered series")
-            if e.get("origin") not in LOCK_ORIGINS:
-                p85.append(f"{name} {sid}: lock origin {e.get('origin')!r}; 11.5 names rejected and rolled-back")
+        for k, e in locks.items():
+            if k[0] not in ctx.reg_ids:
+                p85.append(f"{name}: a lock on {k[0]!r}, which is not a registered series")
+            if k[1] not in LOCK_ORIGINS:
+                p85.append(f"{name} {k[0]}: lock origin {k[1]!r}; 11.5 names rejected and rolled-back")
+        if len(lock_series(locks)) < len(locks):
+            n_multi += 1
         if m.get("rollback") is not None:
-            continue  # T107; reading: the target's locks are restored as they were
+            continue  # T107, T115; the target's locks are restored as they were
         s = ctx.snaps.get((m.get("snapshot") or {}).get("id"))
         base = ctx.snaps.get((ms[i - 1][1].get("snapshot") or {}).get("id")) if i else None
         if s is None or s.get("created_at") != m.get("generated_at") or base is None:
-            if set(locks) != set(prev) or any(locks[k].get("candidate_sha256") != prev[k].get("candidate_sha256") for k in locks if k in prev):
-                p85.append(f"{name}: the locks change ({sorted(prev)} to {sorted(locks)}) in a manifest that no snapshot run wrote")
+            if set(locks) != set(prev):
+                p85.append(f"{name}: the locks change ({sorted(map(_k16, prev))} to {sorted(map(_k16, locks))}) in a manifest that no snapshot run wrote")
             continue
         run = s.get("run") or {}
         trig, rec = run.get("trigger"), recs.get(run.get("id")) or {}
         outcomes = rec.get("series") or {}
+        collecting = trig in ("schedule", "manual")
         held_before = {h.get("series"): (h.get("candidate") or {}).get("sha256") for h in base.get("holds", [])}
         held_after = {h.get("series"): (h.get("candidate") or {}).get("sha256") for h in s.get("holds", [])}
-        for sid in sorted(set(prev) | set(locks), key=str):
-            a, b = prev.get(sid), locks.get(sid)
+        for k in sorted(set(prev) | set(locks), key=lambda x: tuple(map(str, x))):
+            a, b = prev.get(k), locks.get(k)
+            sid = k[0]
+            w = f"{s['id']} {_k16(k)}"
+            if a is not None and b is not None:
+                n_keep += 1
+                diff = [f for f in ("frozen_at", "reason") if a.get(f) != b.get(f)]
+                if diff:
+                    p85.append(f"{w}: the lock changed while in force ({', '.join(f'{f} {a.get(f)!r} to {b.get(f)!r}' for f in diff)}); every snapshot carries a lock forward as it is (11.5, 17.5)")
+                if collecting and k[1] == "rejected" and outcomes.get(sid) == "unchanged":
+                    _, locked, changes = rx_lock_detail(ctx, sid, b)
+                    start = rx_window_start(ctx, rec, sid)
+                    if changes and not (start is not None and any(str(c[0]) < start for c in changes)):
+                        p85.append(f"{w}: the rejected lock stays although the candidate equals the published observations, carries none of its {len(changes)} locked change(s), and the request covered all of them; 11.5 lifts it then")
+            elif b is not None:
+                n_add += 1
+                if k[1] != "rejected":
+                    p85.append(f"{w}: a lock of origin {k[1]!r} appears in a snapshot without being in force under the manifest before it; only a rollback adds a rolled-back lock (17.5)")
+                    continue
+                d = [x for x in decisions if x.get("series") == sid and x.get("decision") == "reject" and x.get("run") == run.get("id")
+                     and x.get("candidate_sha256") == k[2]]
+                if trig != "review" or held_before.get(sid) != k[2] or not d:
+                    p85.append(f"{w}: newly locked, but only the reject of its held candidate in a review run locks a series (trigger {trig}, held {str(held_before.get(sid))[:16]}, reject decisions of the run {len(d)}) (11.5)")
+                elif b.get("reason") != d[0].get("reason"):
+                    p85.append(f"{w}: lock reason {b.get('reason')!r} is not the reviewer's {d[0].get('reason')!r} (8)")
+                if b.get("frozen_at") != s.get("created_at"):
+                    p85.append(f"{w}: frozen_at {b.get('frozen_at')} is not the time of the rejecting run {s.get('created_at')} (8)")
+            else:
+                n_lift += 1
+                if trig == "review":
+                    d = [x for x in decisions if x.get("series") == sid and x.get("decision") == "clear" and x.get("run") == run.get("id") and x.get("candidate_sha256") == k[2]]
+                    if not d:
+                        p85.append(f"{w}: lifted in review run {run.get('id')} without a clear naming its candidate (11.5: a clear names the lock by its candidate hash)")
+                    continue
+                if k[1] != "rejected":
+                    p85.append(f"{w}: a {k[1]} lock lifted by a {trig} run; it is lifted only by an authorized clear, whatever the source returns (11.5)")
+                    continue
+                n_auto += 1
+                oc = outcomes.get(sid)
+                if not collecting or oc in (None, "not-due", "failed", "invalid"):
+                    p85.append(f"{w}: the rejected lock lifted in a {trig} run whose outcome for it is {oc!r}; only a collecting run whose candidate carries none of the locked changes lifts it (11.5)")
+                    continue
+                published, locked, changes = rx_lock_detail(ctx, sid, a)
+                if locked is None:
+                    p85.append(f"{w}: the locked candidate is not readable in archive/holds/, so the lift cannot be verified")
+                    continue
+                state = (s.get("series") or {}).get(sid) or {}
+                if any(x[0] == sid for x in locks):
+                    cand = rx_obs(ctx, state) if oc == "unchanged" else None  # still locked by another lock: the candidate is not kept
+                elif state.get("status") == "held":
+                    cand = rx_lock_candidate(ctx, sid, held_after.get(sid))
+                else:
+                    cand = rx_obs(ctx, state)
+                if cand is not None:
+                    carried = lock_carried(cand, locked, changes)
+                    if carried:
+                        p85.append(f"{w}: the rejected lock lifted although the candidate carries {len(carried)} of its locked changes, e.g. {carried[:3]} (11.5)")
+        # Per series (11.5, 17.3): locked while any lock stands; classified afresh when the last lifts.
+        for sid in sorted(lock_series(prev) | lock_series(locks), key=str):
+            lb, la = [x for x in prev if x[0] == sid], [x for x in locks if x[0] == sid]
             w = f"{s['id']} {sid}"
             state = (s.get("series") or {}).get(sid) or {}
             old = (base.get("series") or {}).get(sid) or {}
             kept = [f for f in ("objects", "retrieved_at") if state.get(f) != old.get(f)]
-            if a is not None and b is not None:
-                n_keep += 1
-                diff = [f for f in ("candidate_sha256", "origin", "frozen_at", "reason") if a.get(f) != b.get(f)]
-                if diff:
-                    p85.append(f"{w}: the lock changed while in force ({', '.join(f'{f} {a.get(f)!r} to {b.get(f)!r}' for f in diff)}); every snapshot carries a lock forward as it is (11.5, 17.5)")
+            if la and lb:
                 if kept:
-                    p105.append(f"{w}: locked ({b.get('origin')}), yet its {kept} changed against {base['id']}; no run publishes anything of a locked series (11.5)")
+                    p105.append(f"{w}: locked ({', '.join(sorted(str(x[1]) for x in la))}), yet its {kept} changed against {base['id']}; no run publishes anything of a locked series (11.5)")
                 if state.get("status") not in ("carried-forward", "unchanged", "held"):
                     p105.append(f"{w}: locked, status {state.get('status')}; a locked series is carried forward (11.5, 17.3)")
                 if state.get("status") == "held" and sid not in held_before:
                     p105.append(f"{w}: locked and newly held; a locked series whose candidate carries a locked change, or that has a rolled-back lock, is not held again (17.3)")
-                if trig in ("schedule", "manual"):
+                if collecting:
                     oc = outcomes.get(sid)
                     if oc not in ("revised-unexpected", "unchanged", "not-due", "failed", "invalid"):
                         p105.append(f"{w}: locked, run outcome {oc!r}; 17.3 gives revised-unexpected or unchanged when it was requested")
                     if state.get("status") == "unchanged" and oc != "unchanged":
                         p105.append(f"{w}: locked with status unchanged but outcome {oc}")
-                    if b.get("origin") == "rejected" and oc == "unchanged":
-                        _, locked, changes = rx_lock_detail(ctx, sid, b)
-                        if changes:
-                            p85.append(f"{w}: the rejected lock stays although the candidate equals the published observations and so carries none of its {len(changes)} locked change(s); 11.5 lifts it then")
-            elif b is not None:
-                n_add += 1
-                if b.get("origin") != "rejected":
-                    p85.append(f"{w}: a lock of origin {b.get('origin')!r} appears in a snapshot; only a rollback adds a rolled-back lock (17.5)")
-                    continue
-                d = [x for x in decisions if x.get("series") == sid and x.get("decision") == "reject" and x.get("run") == run.get("id")
-                     and x.get("candidate_sha256") == b.get("candidate_sha256")]
-                if trig != "review" or held_before.get(sid) != b.get("candidate_sha256") or not d:
-                    p85.append(f"{w}: newly locked, but only the reject of its held candidate in a review run locks a series (trigger {trig}, held {str(held_before.get(sid))[:16]}, locked {str(b.get('candidate_sha256'))[:16]}, reject decisions of the run {len(d)}) (11.5)")
-                elif b.get("reason") != d[0].get("reason"):
-                    p85.append(f"{w}: lock reason {b.get('reason')!r} is not the reviewer's {d[0].get('reason')!r} (8)")
-                if b.get("frozen_at") != s.get("created_at"):
-                    p85.append(f"{w}: frozen_at {b.get('frozen_at')} is not the time of the rejecting run {s.get('created_at')} (8)")
+            elif la:
                 if state.get("status") != "carried-forward" or kept:
                     p105.append(f"{w}: rejected, so carried forward with its published data exactly kept; status {state.get('status')}, changed {kept} (11.5, 17.5)")
             else:
-                n_lift += 1
                 if trig == "review":
-                    d = [x for x in decisions if x.get("series") == sid and x.get("decision") == "clear" and x.get("run") == run.get("id")]
-                    if not d or d[0].get("candidate_sha256") != a.get("candidate_sha256"):
-                        p85.append(f"{w}: the {a.get('origin')} lock is lifted in review run {run.get('id')} without a clear of its candidate {str(a.get('candidate_sha256'))[:16]} (11.5)")
                     if state.get("status") != "carried-forward" or [f for f in ("objects", "retrieved_at", "checked_at") if state.get(f) != old.get(f)]:
                         p85.append(f"{w}: cleared, so carried forward with nothing published in that run; status {state.get('status')} (11.5, 17.5)")
-                    continue
-                if a.get("origin") != "rejected":
-                    p85.append(f"{w}: a {a.get('origin')} lock lifted by a {trig} run; it is lifted only by an authorized clear, whatever the source returns (11.5)")
-                    continue
-                n_auto += 1
-                oc = outcomes.get(sid)
-                if oc in (None, "not-due", "failed", "invalid"):
-                    p85.append(f"{w}: the rejected lock lifted in a run whose outcome for it is {oc!r}; only a candidate that carries none of the locked changes lifts it (11.5)")
-                if state.get("status") not in ("refreshed", "unchanged", "held"):
-                    p85.append(f"{w}: lifted, so classified afresh: published, unchanged or held; status {state.get('status')} (11.5)")
-                if state.get("status") == "held":
-                    cand = rx_lock_candidate(ctx, sid, held_after.get(sid))
-                else:
-                    cand = rx_obs(ctx, state)
-                published, locked, changes = rx_lock_detail(ctx, sid, a)
-                if locked is None or cand is None:
-                    p85.append(f"{w}: the locked or the new candidate is not readable in archive/holds/, so the lift cannot be verified")
-                    continue
-                carried = lock_carried(cand, locked, changes)
-                if carried:
-                    p85.append(f"{w}: the rejected lock lifted although the candidate carries {len(carried)} of its locked changes, e.g. {carried[:3]} (11.5)")
+                elif state.get("status") not in ("refreshed", "unchanged", "held"):
+                    p85.append(f"{w}: its last lock lifted, so the candidate is classified afresh: published, unchanged or held; status {state.get('status')} (11.5)")
     # T105: the frozen alert lasts exactly while the series is locked (11.5, 17.8)
     n_alert = 0
     for rec in rx_records_in_time(ctx):
@@ -5699,37 +6186,40 @@ def rc_locks(ctx):
         n_alert += 1
         after = rx_locks_at(ctx, rec["ended_at"], True)
         alerts = {str(k) for k in rec.get("alerts") or []}
-        for sid in sorted(after, key=str):
+        for sid in sorted(lock_series(after), key=str):
             if f"frozen:{sid}" not in alerts:
-                p105.append(f"run {rec.get('id')}: {sid} is locked ({after[sid].get('origin')}) after the run but the warning frozen:{sid} is not among its alerts (11.5: it lasts)")
+                p105.append(f"run {rec.get('id')}: {sid} is locked ({', '.join(sorted(e.get('origin') for e in locks_of_series(after, sid)))}) after the run but the warning frozen:{sid} is not among its alerts (11.5: it lasts)")
         for k in sorted(alerts):
-            if k.startswith("frozen:") and k[7:] not in after:
+            if k.startswith("frozen:") and k[7:] not in lock_series(after):
                 p105.append(f"run {rec.get('id')}: alert {k} although {k[7:]} is not locked after the run")
         if rec.get("outcome") == "no-change" and is_time(rec.get("started_at")):
             # 11.5, 17.3: a candidate equal to the published observations carries none of a rejected
-            # lock's changes, so the lock lifts and, the list of locked series changing, a snapshot is written.
+            # lock's changes, so the lock lifts and, the locks changing, a snapshot is written;
+            # v0.6 (5): unless the run is windowed and a locked change lies before the window.
             before = rx_locks_at(ctx, rec["started_at"], False)
-            for sid, e in sorted(before.items()):
-                if e.get("origin") == "rejected" and (rec.get("series") or {}).get(sid) == "unchanged":
-                    _, _, changes = rx_lock_detail(ctx, sid, e)
-                    if changes:
-                        p85.append(f"run {rec.get('id')}: {sid}'s candidate equals the published observations (outcome unchanged), so its rejected lock lifts and a snapshot is written; the run wrote none (11.5, 17.3)")
+            for k, e in sorted(before.items(), key=lambda kv: tuple(map(str, kv[0]))):
+                if k[1] == "rejected" and (rec.get("series") or {}).get(k[0]) == "unchanged":
+                    _, _, changes = rx_lock_detail(ctx, k[0], e)
+                    start = rx_window_start(ctx, rec, k[0])
+                    if changes and not (start is not None and any(str(c[0]) < start for c in changes)):
+                        p85.append(f"run {rec.get('id')}: {k[0]}'s candidate equals the published observations (outcome unchanged), so its rejected lock {str(k[2])[:16]} lifts and a snapshot is written; the run wrote none (11.5, 17.3)")
     # T106: every locked candidate is kept in archive/holds/ (11.5, 17.1, 17.5)
-    for (sid, sha), i in sorted(first.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1]))):
+    for k, i in sorted(first.items(), key=lambda kv: tuple(map(str, kv[0]))):
         name, m = ms[i]
-        e = ls[i][sid]
+        sid, origin, sha = k
         f = f"{sid}/{str(sha)[:16]}.json"
         data = rv.read(rv.holds, f)
         if data is None:
-            p106.append(f"{sid} locked candidate {str(sha)[:16]} ({e.get('origin')}, in force from {name}) is not in archive/holds/ (11.5: locked candidates are never pruned)")
+            p106.append(f"{sid} locked candidate {str(sha)[:16]} ({origin}, in force from {name}) is not in archive/holds/ (11.5: locked candidates are never pruned)")
             continue
         if sha256_hex(data) != sha:
             p106.append(f"archive/holds/{f} has sha256 {sha256_hex(data)[:16]}, the lock names {str(sha)[:16]}")
-        if e.get("origin") == "rejected" and rx_first_held(ctx, sid, sha) is None:
+        if origin == "rejected" and rx_first_held(ctx, sid, sha) is None:
             p106.append(f"{sid}: the rejected lock's candidate {str(sha)[:16]} was never held by a snapshot (11.5: the locked candidate is the rejected one)")
-    # T107: rollback locks (9, 11.5, 17.5)
+    # T107 (rollback.locked, statuses, withdrawn candidates, kept locks) and T115 (the rollback records)
     order = [s["id"] for s in ctx.st.registry.get("series", [])]
-    n_rb = 0
+    origin_rank = {o: n for n, o in enumerate(LOCK_ORIGINS)}
+    n_rb, n_tol, wanted_records = 0, 0, set()
     for i, (name, m) in enumerate(ms):
         rb = m.get("rollback")
         if rb is None:
@@ -5739,25 +6229,108 @@ def rc_locks(ctx):
         if not isinstance(rb, dict) or frm is None or to is None:
             p107.append(f"{name}: rollback {rb!r:.80} does not name two archived snapshots")
             continue
-        want = [sid for sid in order if canon_bytes(rx_obs(ctx, frm.get("series", {}).get(sid, {}))) != canon_bytes(rx_obs(ctx, to.get("series", {}).get(sid, {})))]
-        if rb.get("locked") != want:
-            p107.append(f"{name}: rollback.locked {rb.get('locked')!r}, the series whose observations differ between {frm['id']} and {to['id']}, in registry order, are {want} (9, 17.5)")
+        before = ls[i - 1] if i else {}
+        own, kept, required, tolerated = rx_rollback_expected(ctx, m, before)
+        target = rx_frozen(to)
+        target_series = lock_series(target)
+        # T107: rollback.locked (9, 12.9): the series of the record's locks that the target does not lock, registry order.
+        want_locked = [sid for sid in order if sid in lock_series(required) and sid not in target_series]
+        if rb.get("locked") != want_locked:
+            p107.append(f"{name}: rollback.locked {rb.get('locked')!r}; the series locked after the rollback that the target snapshot does not lock (its own: those differing between {frm['id']} and {to['id']}; kept rejection locks), in registry order, are {want_locked} (9, 12.9, 17.5)")
         if rb.get("at") != m.get("generated_at"):
             p107.append(f"{name}: rollback.at {rb.get('at')} is not the manifest's generated_at {m.get('generated_at')} (reading: the lock's frozen_at is the rollback run's time)")
-        for sid in want:
+        for k, e in own.items():
+            sid = k[0]
             withdrawn = rx_obs(ctx, frm.get("series", {}).get(sid, {}))
-            data = rv.read(rv.holds, f"{sid}/{sha256_hex(canon_bytes(withdrawn))[:16]}.json")
-            if data != canon_bytes(withdrawn):
+            if rv.read(rv.holds, f"{sid}/{str(k[2])[:16]}.json") != canon_bytes(withdrawn):
                 p107.append(f"{name} {sid}: the withdrawn observations of {frm['id']} are not stored as its locked candidate in archive/holds/ (17.5)")
             summ = (m.get("series") or {}).get(sid) or {}
             held = any(h.get("series") == sid for h in to.get("holds", []))
             ws = "held" if held else ("not-yet-published" if not (to.get("series", {}).get(sid) or {}).get("objects") else "frozen")
             if summ.get("status") != ws:
                 p107.append(f"{name} {sid}: status {summ.get('status')}; a series the rollback locks is {ws} (9, 17.5: held stays held)")
-        for sid, e in rx_frozen(to).items():
-            if sid not in ls[i]:
-                p107.append(f"{name}: the target's lock on {sid} is not in force after the rollback (17.5: restored as it was)")
-    # T110: a snapshot whose list of locked series differs from the previous snapshot's is significant and kept (17.6)
+        for k in target:
+            if k not in ls[i]:
+                p107.append(f"{name}: the target's lock {_k16(k)} is not in force after the rollback (17.5: restored as it was)")
+        for k in kept:
+            if k not in ls[i]:
+                p107.append(f"{name}: the rejection lock {_k16(k)} in force before the rollback is not in force after it (17.5 v0.6: a rollback keeps every rejection lock, including those decided after its target)")
+        for k in own:
+            if k not in ls[i]:
+                p107.append(f"{name}: the rollback's own lock {_k16(k)} is not in force after it (17.5: it locks every series it changes)")
+        # T115: the rollback record (17.5 v0.6)
+        rec, err, f = rx_rollback_record(ctx, m)
+        if f:
+            wanted_records.add(f)
+        if rec is None:
+            p115.append(f"{name}: no readable rollback record archive/rollbacks/{f} ({err}); 17.5 (v0.6) writes one with the rollback manifest")
+            continue
+        try:
+            errs = schema_errors(rec, ctx.st.schemas["rollback"])
+        except SchemaKeywordError as exc:
+            errs = [f"validator cannot evaluate: {exc}"]
+        p115 += [f"archive/rollbacks/{f}: {x} (rollback.schema.json)" for x in errs[:3]]
+        if rec.get("schema") != SCHEMA_IDS["rollback"]:
+            p115.append(f"archive/rollbacks/{f}: schema {rec.get('schema')!r}, 17.5 gives {SCHEMA_IDS['rollback']}")
+        for fld in ("from", "to", "at", "reason"):
+            if rec.get(fld) != rb.get(fld):
+                p115.append(f"archive/rollbacks/{f}: {fld} {rec.get(fld)!r}, the rollback manifest {name} has {rb.get(fld)!r}")
+        run_id = rx_rollback_run(ctx, rb.get("at"))
+        if rec.get("run") != run_id or not (isinstance(rec.get("run"), str) and RX_RUN_ID.fullmatch(rec["run"])):
+            p115.append(f"archive/rollbacks/{f}: run {rec.get('run')!r}, the rollback run recorded at {rb.get('at')} is {run_id!r} (17.2 form)")
+        got = [lock_key(x) for x in rec["locks"] if isinstance(x, dict)]
+        if len(set(got)) != len(got):
+            p115.append(f"archive/rollbacks/{f}: a lock is listed twice")
+        miss = [k for k in required if k not in got]
+        extra = [k for k in got if k not in required and k not in tolerated]
+        n_tol += sum(1 for k in got if k in tolerated)
+        for k in miss:
+            why = "its own lock" if k in own else "a rejection lock in force before it"
+            p115.append(f"archive/rollbacks/{f}: lacks {_k16(k)}, {why} that the target's frozen does not list (17.5 v0.6)")
+        for k in extra:
+            why = "the target's frozen already lists it" if k in target else "it is neither the rollback's own lock nor a lock in force before it"
+            p115.append(f"archive/rollbacks/{f}: lists {_k16(k)}, but {why} (17.5: each lock in force after the rollback that the target snapshot's frozen does not list)")
+        ranks = [(order.index(k[0]) if k[0] in order else len(order), origin_rank.get(k[1], 9)) for k in got]
+        if ranks != sorted(ranks):
+            p115.append(f"archive/rollbacks/{f}: locks {[_k16(k) for k in got]} are not in registry order then origin (17.5)")
+        for x in rec["locks"]:
+            if not isinstance(x, dict):
+                continue
+            k = lock_key(x)
+            pairs = [(c.get("period"), c.get("field")) if isinstance(c, dict) and set(c) == {"period", "field"} else None for c in (x.get("locked_changes") or [])]
+            if None in pairs or not isinstance(x.get("locked_changes"), list):
+                p115.append(f"archive/rollbacks/{f} {_k16(k)}: locked_changes are not a list of {{period, field}}")
+                continue
+            bad = sorted({fd for _, fd in pairs if not (isinstance(fd, str) and (fd in SECTION10_FIELDS or (fd.startswith("extra.") and len(fd) > 6)))}, key=str)
+            if bad:
+                p115.append(f"archive/rollbacks/{f} {_k16(k)}: locked_changes fields {bad} are not section 10 member names")
+            if k in own:
+                want = [(c["period"], c["field"]) for c in own[k]["locked_changes"]]
+            elif k in before:
+                want = rx_lock_detail(ctx, k[0], before[k])[2]
+            else:
+                continue
+            if want is None:
+                p115.append(f"archive/rollbacks/{f} {_k16(k)}: the locked candidate is not readable, so locked_changes cannot be recomputed")
+            elif sorted(pairs, key=lambda c: tuple(map(str, c))) != sorted(want, key=lambda c: tuple(map(str, c))) or len(set(pairs)) != len(pairs):
+                ms_, ex_ = sorted(set(want) - set(pairs)), sorted(set(pairs) - set(want))
+                p115.append(f"archive/rollbacks/{f} {_k16(k)}: locked_changes differ from the {len(want)} recomputed: missing {ms_[:4]}, not a change {ex_[:4]} (11.5)")
+        # the locks in force after the rollback are derived from the record (11.5 v0.6)
+        derived = dict(target)
+        for x in rec["locks"]:
+            if isinstance(x, dict):
+                derived.setdefault(lock_key(x), x)
+        if set(derived) != set(ls[i]):
+            p115.append(f"{name}: the locks in force under the rollback manifest are not the target's frozen plus the record's locks")
+        rec_series = [sid for sid in order if sid in {k[0] for k in got} and sid not in target_series]
+        if rb.get("locked") != rec_series:
+            p115.append(f"{name}: rollback.locked {rb.get('locked')!r}, the series of the record's locks that the target does not lock are {rec_series} (12.9)")
+    for f in rv.files(rv.rollbacks):
+        if not RX_ROLLBACK_PATH.fullmatch(f):
+            p115.append(f"archive/rollbacks/{f} is not <YYYYMMDDTHHMMSSZ>.json (17.5)")
+        elif f not in wanted_records:
+            p115.append(f"archive/rollbacks/{f} belongs to no archived rollback manifest (17.5: written with the rollback manifest)")
+    # T110: a snapshot whose locks differ from the previous snapshot's is significant and kept (17.3, 17.6)
     sig = rx_significant(ctx)
     n_sig = 0
     for sid_ in ctx.order:
@@ -5766,7 +6339,7 @@ def rc_locks(ctx):
             continue
         n_sig += 1
         if sid_ not in sig:
-            p110.append(f"{sid_}: its locked series {sorted(rx_frozen(s))} differ from its previous snapshot's, but it is not treated as significant")
+            p110.append(f"{sid_}: its locks {sorted(map(_k16, rx_frozen(s)))} differ from its previous snapshot's, but it is not treated as significant")
         for path, (sha, nbytes) in sorted(rx_named_files(ctx, sid_).items(), key=lambda kv: str(kv[0])):
             data = rv.read(rv.live, path) if isinstance(path, str) else None
             if data is None or (sha is not None and sha256_hex(data) != sha):
@@ -5778,23 +6351,25 @@ def rc_locks(ctx):
             continue
         n_restore += 1
         before, after = rx_locks_at(ctx, rec["started_at"], False), rx_locks_at(ctx, rec["ended_at"], True)
-        if {k: v.get("candidate_sha256") for k, v in before.items()} != {k: v.get("candidate_sha256") for k, v in after.items()}:
-            p111.append(f"restore {rec.get('id')}: locks before {sorted(before)}, after {sorted(after)}")
+        if set(before) != set(after):
+            p111.append(f"restore {rec.get('id')}: locks before {sorted(map(_k16, before))}, after {sorted(map(_k16, after))}")
         nxt = next((x for x in rx_records_in_time(ctx) if str(x.get("started_at")) > rec["ended_at"] and x.get("outcome") == "published" and x.get("snapshot") in ctx.snaps), None)
         if nxt is not None:
             later = rx_locks_at(ctx, nxt["ended_at"], True) if is_time(nxt.get("ended_at")) else {}
-            cleared = {d.get("series") for d in decisions if d.get("decision") == "clear" and d.get("run") == nxt.get("id")}
-            for sid, e in sorted(after.items()):
-                if e.get("origin") == "rolled-back" and sid not in later and sid not in cleared:
-                    p111.append(f"restore {rec.get('id')}: the rolled-back lock on {sid} is gone after the next publishing run {nxt.get('id')} without a clear")
-    check("T85 lock transitions recomputed from the published state (each snapshot's frozen plus its manifest's rollback.locked): a lock appears only by the reject of the held candidate in a review run (frozen_at the run's time, the reviewer's reason) or by a rollback; it is carried forward unchanged; a rejected lock is lifted without a person only in a run whose candidate carries none of its locked changes, and the series is then classified afresh; a rolled-back lock is lifted only by a clear in a review run (8, 11.5, 17.3, 17.5)", p85,
-          f"{len(ms)} manifests: {n_add} lock(s) added by a reject, {n_keep} kept, {n_lift} lifted ({n_auto} without a person)")
-    check("T105 while a series is locked no run publishes anything of it: objects and retrieved_at kept, carried forward (or unchanged, or held when the target held it), run outcome revised-unexpected or unchanged when requested, never held again; frozen:<series> among the alerts of every collecting run exactly while it is locked (11.5, 17.3, 17.8)", p105,
+            cleared = {(d.get("series"), d.get("candidate_sha256")) for d in decisions if d.get("decision") == "clear" and d.get("run") == nxt.get("id")}
+            for k in sorted(after, key=lambda x: tuple(map(str, x))):
+                if k[1] == "rolled-back" and k not in later and (k[0], k[2]) not in cleared:
+                    p111.append(f"restore {rec.get('id')}: the rolled-back lock {_k16(k)} is gone after the next publishing run {nxt.get('id')} without a clear")
+    check("T85 lock transitions recomputed per lock (series, origin, hash) from the published state (each snapshot's frozen plus, for a rollback manifest, its rollback record): a lock appears only by the reject of the held candidate in a review run (frozen_at the run's time, the reviewer's reason) or by a rollback; it is carried forward unchanged; a rejected lock is lifted without a person only in a collecting run whose candidate carries none of its locked changes and whose request covers them all (v0.6: new periods count, a locked change before the window keeps it); a series stays locked while any of its locks stands and is classified afresh only when the last lifts; a rolled-back lock is lifted only by a clear naming its hash (5, 8, 11.5, 17.3, 17.5)", p85,
+          f"{len(ms)} manifests: {n_add} lock(s) added by a reject, {n_keep} kept, {n_lift} lifted ({n_auto} without a person); {n_multi} manifest(s) with a series under several locks")
+    check("T105 while a series is locked (by any of its locks) no run publishes anything of it: objects and retrieved_at kept, carried forward (or unchanged, or held when the target held it), run outcome revised-unexpected or unchanged when requested, never held again; frozen:<series> among the alerts of every collecting run exactly while it is locked (11.5, 17.3, 17.8)", p105,
           f"{n_keep} kept lock state(s), {n_alert} run record(s)")
-    check("T106 every locked candidate ever in force is in archive/holds/<series>/<16 hex>.json with its SHA-256, a rejected one having been held; none is pruned (11.5, 17.1, 17.5)", p106, f"{len(first)} locked candidate(s)")
-    check("T107 every rollback locks exactly the series whose observations differ between the withdrawn state and the target, in registry order (rollback.locked), shows them frozen in its manifest (held stays held), stores the withdrawn observations as their locked candidate, and keeps the target's own locks (9, 11.5, 17.5)", p107, f"{n_rb} rollback(s)")
-    check("T110 every snapshot whose list of locked series differs from its previous snapshot's is significant and every file it names is in live/ (17.6)", p110, f"{n_sig} such snapshot(s)")
+    check("T106 every locked candidate ever in force is in archive/holds/<series>/<16 hex>.json with its SHA-256, a rejected one having been held; none is pruned (11.5, 17.1, 17.5)", p106, f"{len(first)} lock(s)")
+    check("T107 every rollback: rollback.locked is exactly the series locked after it that the target does not lock, in registry order; its own locks (each series whose observations differ, the withdrawn observations stored as the locked candidate) show frozen in its manifest (held stays held); the target's locks and every rejection lock in force before it stay in force (9, 11.5, 12.9, 17.5 v0.6)", p107, f"{n_rb} rollback(s)")
+    check("T110 every snapshot whose locks differ from its previous snapshot's (a lock added or lifted) is significant and every file it names is in live/ (17.3, 17.6)", p110, f"{n_sig} such snapshot(s)")
     check("T111 the locks in force survive every restore: the same locks before and after, and the next publishing run keeps each rolled-back lock unless it clears it (11.5, 17.4, 17.5)", p111, f"{n_restore} restore(s)")
+    check("T115 every rollback has its rollback record archive/rollbacks/<at as YYYYMMDDTHHMMSSZ>.json (schema rollback/1; nothing else in that folder): from, to, at, reason as the manifest, run the rollback run; locks exactly the locks in force after the rollback that the target's frozen does not list (its own rolled-back locks and the kept rejection locks), in registry order then origin, each with its locked changes recomputed; the locks in force under the rollback manifest are the target's frozen plus these, and rollback.locked their series the target does not lock (9, 11.5, 12.9, 17.5 v0.6)", p115,
+          f"{n_rb} rollback(s), {len(rv.files(rv.rollbacks))} record(s)" + (f"; {n_tol} earlier rolled-back lock(s) kept, accepted (see the report)" if n_tol else ""))
 
 
 def rc_withdrawals(ctx):
@@ -5866,10 +6441,12 @@ def rc_reviews(ctx):
         if dec == "clear":
             # 17.5 (v0.5): for clear, hold carries the lock's reason and frozen_at, and the changes
             # are measured against the lock's candidate. The lock is the one in force when the run started.
-            lock = rx_locks_at(ctx, d["decided_at"], inclusive=False).get(sid) if is_time(d.get("decided_at")) else None
-            if lock is None or lock.get("candidate_sha256") != sha:
+            # v0.6: the lock is named by its candidate hash among the series' locks.
+            named = [e for e in locks_of_series(rx_locks_at(ctx, d["decided_at"], inclusive=False), sid) if e.get("candidate_sha256") == sha] if is_time(d.get("decided_at")) else []
+            if not named:
                 p.append(f"{w}: no lock on that candidate was in force when run {d.get('run')} started")
                 continue
+            lock = next((e for e in named if v.get("hold") == {"reason": e.get("reason"), "opened_at": e.get("frozen_at")}), named[0])
             hold = {"reason": lock.get("reason"), "opened_at": lock.get("frozen_at")}
         else:
             hold = next((h for h in (base or {}).get("holds", []) if h.get("series") == sid and (h.get("candidate") or {}).get("sha256") == sha), None)
@@ -5971,7 +6548,7 @@ def rc_publications(ctx):
 
 # --- T84: the scenario of appendix B ---
 
-SCENARIO_STEPS = [  # appendix B (v0.5): time, outcome, kind of run
+SCENARIO_STEPS = [  # appendix B (v0.6): time, outcome, kind of run
     ("2026-11-13T14:17:00Z", "published", "collect"),   # 1 first publication of all nine series
     ("2026-11-13T15:17:00Z", "no-change", "collect"),   # 2 nothing changed
     ("2026-11-13T16:17:00Z", "published", "collect"),   # 3 same-day EFFR revision of 2026-11-12, flagged r
@@ -5987,11 +6564,11 @@ SCENARIO_STEPS = [  # appendix B (v0.5): time, outcome, kind of run
     ("2026-11-18T14:25:00Z", "refused", "review"),      # 13 example-reader (read) approves debt-intragov: refused (permission)
     ("2026-11-18T14:30:00Z", "published", "review"),    # 14 example-writer (write) rejects debt-intragov: locked (rejected)
     ("2026-11-18T22:17:00Z", "no-change", "collect"),   # 15 the rejected candidate comes back identical: still locked
-    ("2026-11-19T22:17:00Z", "published", "collect"),   # 16 the source returns the published value: the lock lifts, appended
+    ("2026-11-19T22:17:00Z", "published", "collect"),   # 16 the published value returns, the rejected new day 2026-11-16 stays: still locked (v0.6)
     ("2026-11-24T19:17:00Z", "published", "collect"),   # 17 H.6 release, M1 above the alert ratio; new EFFR days; debt times out
-    ("2026-11-24T20:00:00Z", "published", "rollback"),  # 18 rollback to the snapshot of step 16; five series locked (rolled-back)
+    ("2026-11-24T20:00:00Z", "published", "rollback"),  # 18 rollback to step 16; five series locked (rolled-back); debt-intragov's rejection lock kept
     ("2026-11-24T20:30:00Z", "published", "restore"),   # 19 live deleted and restored from the archive; the locks still in force
-    ("2026-11-24T22:17:00Z", "published", "collect"),   # 20 three new debt days; the five locked series publish nothing
+    ("2026-11-24T22:17:00Z", "published", "collect"),   # 20 three new debt days for debt-total, debt-held-public; the six locked series publish nothing
     ("2026-11-25T15:00:00Z", "published", "review"),    # 21 example-maintainer (maintain) clears the lock of m1-sa
     ("2026-11-25T15:17:00Z", "published", "collect"),   # 22 m1-sa gets the release again (expected revision); four still locked
 ]
@@ -6049,7 +6626,7 @@ class ScenarioView:
 
 def rc_scenario(ctx):
     rv = ctx.rv
-    name = "T84 a scenario root follows the table of appendix B (v0.5): 22 runs at the listed times with the listed outcomes and triggers, and the listed holds, approval, refusal, rejected lock and its lift, pin, revisions, rollback with its locks, restore, clear"
+    name = "T84 a scenario root follows the table of appendix B (v0.6): 22 runs at the listed times with the listed outcomes and triggers, and the listed holds, approval, refusal, rejected lock (kept at step 16 because its rejected new day persists), pin, revisions, rollback with its locks, restore, clear"
     if not rx_is_scenario(ctx):
         rx_not_scenario(ctx, name)
         return
@@ -6087,12 +6664,29 @@ def rc_scenario(ctx):
     expect((r10.get("series") or {}).get("effr") == "failed" and "blocked:nyfed-markets" in (r10.get("alerts") or []), f"step 10: effr {(r10.get('series') or {}).get('effr')}, alerts {r10.get('alerts')}; a 429 fails the fetch and raises blocked:nyfed-markets (17.4)")
     expect((r11.get("series") or {}).get("effr") == "invalid" and "invalid:nyfed-markets" in (r11.get("alerts") or []), f"step 11: effr {(r11.get('series') or {}).get('effr')}, alerts {r11.get('alerts')}; an unknown field makes the response invalid and raises invalid:nyfed-markets (5, 17.4)")
     expect(sv.held(12) == ["debt-intragov"], f"step 12: holds {sv.held(12)}, appendix B gives debt-intragov")
-    expect(sv.held(14) == [] and sorted(rx_frozen(sv.snap(14))) == ["debt-intragov"] and (rx_frozen(sv.snap(14)).get("debt-intragov") or {}).get("origin") == "rejected",
-           f"step 14: frozen {rx_frozen(sv.snap(14))}, appendix B gives debt-intragov locked with origin rejected")
+    expect(sv.held(14) == [] and [(k[0], k[1]) for k in rx_frozen(sv.snap(14))] == [("debt-intragov", "rejected")],
+           f"step 14: frozen {sorted(map(_k16, rx_frozen(sv.snap(14))))}, appendix B gives debt-intragov locked with origin rejected")
     r15 = sv.record(15) or {}
     expect((r15.get("series") or {}).get("debt-intragov") == "revised-unexpected" and "frozen:debt-intragov" in (r15.get("alerts") or []),
            f"step 15: debt-intragov outcome {(r15.get('series') or {}).get('debt-intragov')}, alerts {r15.get('alerts')}; still locked gives revised-unexpected and frozen:debt-intragov (17.3)")
-    expect(sorted(rx_frozen(sv.snap(16))) == [] and sv.status(16, "debt-intragov") == "refreshed", f"step 16: debt-intragov's lock not lifted and the series not appended (status {sv.status(16, 'debt-intragov')})")
+    # v0.6 row 16: the source returns the published intragovernmental value with the new days; the rejected
+    # new day 2026-11-16 is still there unchanged, so debt-intragov stays locked (11.5: rejected additions stay
+    # locked); debt-total and debt-held-public are appended.
+    fz14, fz16 = rx_frozen(sv.snap(14)), rx_frozen(sv.snap(16))
+    r16 = sv.record(16) or {}
+    expect(set(fz16) == set(fz14) and len(fz16) == 1 and all(fz16[k] == fz14[k] for k in fz16),
+           f"step 16: locks {sorted(map(_k16, fz16))}, appendix B (v0.6) keeps step 14's rejected lock of debt-intragov unchanged {sorted(map(_k16, fz14))}")
+    expect(sv.status(16, "debt-intragov") == "carried-forward" and (r16.get("series") or {}).get("debt-intragov") == "revised-unexpected" and "frozen:debt-intragov" in (r16.get("alerts") or []),
+           f"step 16: debt-intragov status {sv.status(16, 'debt-intragov')}, outcome {(r16.get('series') or {}).get('debt-intragov')}, alerts {r16.get('alerts')}; still locked: carried-forward, revised-unexpected, frozen:debt-intragov (17.3)")
+    expect(all(sv.status(16, x) == "refreshed" and (r16.get("series") or {}).get(x) == "appended" for x in ("debt-total", "debt-held-public")),
+           f"step 16: debt-total {sv.status(16, 'debt-total')}/{(r16.get('series') or {}).get('debt-total')}, debt-held-public {sv.status(16, 'debt-held-public')}/{(r16.get('series') or {}).get('debt-held-public')}; appendix B gives both appended")
+    lk14 = next(iter(fz14.values()), {})
+    _, locked14, ch14 = rx_lock_detail(ctx, "debt-intragov", lk14) if lk14 else (None, None, None)
+    new14 = [c for c in (ch14 or []) if c[1] == "period"]
+    expect(any(c[0] == "2026-11-16" for c in new14), f"step 14: the rejected lock's locked changes {ch14}; appendix B (v0.6) has its rejected candidate carry the new day 2026-11-16, a locked change of field period")
+    o16 = {observation_key(o): o for o in sv.obs(16, "debt-total")}
+    lmap = {observation_key(o): o for o in (locked14 or [])}
+    expect("2026-11-16" in o16 and "2026-11-16" in lmap, "step 16: 2026-11-16 is not both published for debt-total and in debt-intragov's rejected candidate (the source keeps the rejected new day)")
     h6 = [sid for sid, ser in ctx.st.series.items() if ser["source"] == "frb-releases"]
     debt = [sid for sid, ser in ctx.st.series.items() if ser["source"] == "fiscaldata"]
     expect(all(sv.status(17, sid) == "refreshed" for sid in h6), "step 17: an H.6 series is not refreshed")
@@ -6274,14 +6868,17 @@ def rc_clear(ctx):
         m_now = rx_manifest_of_snapshot(ctx, snap_id, d.get("decided_at"))
         base = ctx.snaps.get(rx_base_id(ctx, snap_id)) or {}
         before, after = rx_locks_at(ctx, d["decided_at"], inclusive=False), rx_locks_of(ctx, m_now)
-        if sid not in before or before[sid].get("candidate_sha256") != sha:
-            p.append(f"{w}: the locks in force before it ({sorted(before)}) hold no lock of {sid} on candidate {str(sha)[:16]}")
-        if sid in after:
-            p.append(f"{w}: {sid} is still locked under the manifest of snapshot {snap_id}")
-        others_b = {k: v.get("candidate_sha256") for k, v in before.items() if k != sid}
-        others_a = {k: v.get("candidate_sha256") for k, v in after.items() if k != sid}
+        named = {k for k in before if k[0] == sid and k[2] == sha}
+        if not named:
+            p.append(f"{w}: the locks in force before it ({sorted(map(_k16, before))}) hold no lock of {sid} on candidate {str(sha)[:16]}")
+        if named & set(after):
+            p.append(f"{w}: the lock it names is still in force under the manifest of snapshot {snap_id}")
+        # v0.6: a clear names one lock by its hash; every other lock, of this series too, stays.
+        others_b, others_a = set(before) - named, set(after)
         if others_b != others_a:
-            p.append(f"{w}: other locks changed in the same run ({sorted(others_b)} to {sorted(others_a)})")
+            p.append(f"{w}: other locks changed in the same run ({sorted(map(_k16, others_b - others_a))} lifted, {sorted(map(_k16, others_a - others_b))} added)")
+        if any(k[0] == sid for k in others_b) and sid not in lock_series(after):
+            p.append(f"{w}: {sid} has another lock, so it stays locked after the clear (11.5 v0.6)")
         if rx_hold_set(base) != rx_hold_set(s):
             p.append(f"{w}: the holds changed in a clear run")
         if s.get("revisions"):
@@ -6290,16 +6887,16 @@ def rc_clear(ctx):
             old = (base.get("series") or {}).get(series_id) or {}
             if state.get("objects") != old.get("objects"):
                 p.append(f"{w}: {series_id} has new objects in the clear run (17.5: it fetches and publishes nothing)")
-        if (rx_locks_at(ctx, d["decided_at"], inclusive=True).get(sid)) is not None:
-            p.append(f"{w}: the manifest in place right after the run still locks {sid}")
-    check("T108 every clear (an authorized review, T94; refusals, T95) lifts exactly the lock in force on its candidate, in a review run whose snapshot keeps every other lock and hold, writes no revision record and publishes no new object; the series is carried forward and from then on is no longer locked (11.5, 17.5)", p,
+        if named & set(rx_locks_at(ctx, d["decided_at"], inclusive=True)):
+            p.append(f"{w}: the manifest in place right after the run still has the lock it names")
+    check("T108 every clear (an authorized review, T94; refusals, T95) lifts exactly the lock it names by its candidate hash, in a review run whose snapshot keeps every other lock (of the same series too, v0.6) and hold, writes no revision record and publishes no new object; the series is carried forward and stays locked only while another of its locks stands (11.5, 17.5)", p,
           f"{n} clear decision(s)")
 
 
 def rc_zero(ctx):
     """T113: missing versus zero in what was published and held (2.3, v0.5)."""
     rv, st = ctx.rv, ctx.st
-    p, seen, n_obs, n_null = [], set(), 0, 0
+    p, seen, n_obs, n_null, n_zero = [], set(), 0, 0, 0
     for sid_ in ctx.order:
         for series_id in DEBT_SERIES:
             state = (ctx.snaps[sid_].get("series") or {}).get(series_id) or {}
@@ -6308,6 +6905,8 @@ def rc_zero(ctx):
                 continue
             seen.add(key)
             ser = st.series[series_id]
+            accepted = accepted_zero_periods(ser)
+            zero_text = pad_decimal("0", ser["decimals"])
             for o in rx_obs(ctx, state):
                 n_obs += 1
                 v, era = o.get("value"), era_for(ser, str(o.get("period")))
@@ -6318,8 +6917,13 @@ def rc_zero(ctx):
                         p.append(f"{w}: value null in an era without null_text; only a breakout's \"null\" means not published (2.3)")
                     if o.get("missing") != {"code": "not-published", "note": ""}:
                         p.append(f"{w}: missing {o.get('missing')!r}; 2.3 stores \"null\" as missing.code not-published with an empty note")
-                elif isinstance(v, str) and _DECIMAL_TEXT.fullmatch(v) and D(v) == 0:
-                    p.append(f"{w}: value {v!r} equals zero; refuse_zero makes such a candidate invalid, so it is never stored (2.3)")
+                elif is_exact_zero(v):
+                    if o.get("period") not in accepted:
+                        p.append(f"{w}: value {v!r} equals zero and no accepted_zeros entry names this period; refuse_zero makes such a candidate invalid, so it is never stored (2.3)")
+                    elif v != zero_text or "missing" in o:
+                        p.append(f"{w}: an accepted zero stored as {v!r} (missing {o.get('missing')!r}); 2.3 (v0.6) stores it as the number zero {zero_text!r}, never as missing")
+                    else:
+                        n_zero += 1
     n_cand = 0
     for f in rv.files(rv.holds):
         series_id = f.split("/", 1)[0]
@@ -6329,19 +6933,22 @@ def rc_zero(ctx):
         if err or not isinstance(v, list):
             continue  # T64
         n_cand += 1
-        zero = [o.get("period") for o in v if isinstance(o, dict) and isinstance(o.get("value"), str) and _DECIMAL_TEXT.fullmatch(o["value"]) and D(o["value"]) == 0]
+        accepted = accepted_zero_periods(st.series[series_id])
+        zero = [o.get("period") for o in v if isinstance(o, dict) and is_exact_zero(o.get("value")) and o.get("period") not in accepted]
         if zero:
-            p.append(f"archive/holds/{f}: values equal to zero on {zero[:3]}; a candidate with a zero is invalid (11.4), never held or locked")
-    check("T113 missing versus zero: no observation of debt-total, debt-held-public or debt-intragov in any snapshot, and no held or locked candidate of them, has a value equal to zero; every null value is a breakout stored as missing not-published with an empty note (2.3, 6.1, 11.4)", p,
-          f"{n_obs} observations in {len(seen)} distinct states, {n_null} not published; {n_cand} candidate file(s)")
+            p.append(f"archive/holds/{f}: values equal to zero on {zero[:3]} that no accepted_zeros entry names; a candidate with such a zero is invalid (11.4), never held or locked")
+    n_entries = sum(len(accepted_zero_periods(st.series[x])) for x in DEBT_SERIES)
+    check("T113 missing versus zero: no observation of debt-total, debt-held-public or debt-intragov in any snapshot, and no held or locked candidate of them, has a value equal to zero unless an accepted_zeros entry names that period (v0.6), and an accepted zero is stored as the number zero (0.00), never as missing; every null value is a breakout stored as missing not-published with an empty note (2.3, 6.1, 11.4)", p,
+          f"{n_obs} observations in {len(seen)} distinct states, {n_null} not published, {n_zero} accepted zero(s) stored; {n_cand} candidate file(s); {n_entries} accepted_zeros entr{'y' if n_entries == 1 else 'ies'} in the registry")
 
 
 SCENARIO_LOCKED = ["effr", "m1-sa", "m2-sa", "m1-nsa", "m2-nsa"]  # appendix B step 18, in registry order
+SCENARIO_KEPT = "debt-intragov"  # appendix B (v0.6) steps 14 to 22: its rejection lock stands throughout
 
 
 def rc_scenario_v05(ctx):
-    """T114: the v0.5 steps of appendix B (18 to 22)."""
-    name = "T114 appendix B in v0.5: the rollback of step 18 locks effr, m1-sa, m2-sa, m1-nsa, m2-nsa (rolled-back, withdrawn observations of step 17 as locked candidates, frozen in its manifest); the restore of step 19 keeps them; step 20 appends three debt days while the five publish nothing (revised-unexpected, frozen alerts, listed under frozen); step 21 clears m1-sa (example-maintainer, maintain, cleared); step 22 republishes only m1-sa, the release again as an expected revision with revision-large:m1-sa, the other four still locked"
+    """T114: the steps of appendix B that v0.5 added and v0.6 changed (16, 18, 20) or kept (19, 21, 22)."""
+    name = "T114 appendix B in v0.6, steps 18 to 22: the rollback of step 18 locks effr, m1-sa, m2-sa, m1-nsa, m2-nsa (rolled-back, step 17's withdrawn observations as locked candidates, frozen in its manifest) and keeps debt-intragov's rejection lock, its rollback record listing exactly the five; the restore of step 19 keeps all six; step 20 appends three days to debt-total and debt-held-public while the six locked series publish nothing (revised-unexpected, frozen alerts, listed under frozen); step 21 clears m1-sa (example-maintainer, maintain, cleared); step 22 republishes only m1-sa, the release again as an expected revision with revision-large:m1-sa, the four others and debt-intragov still locked"
     if not rx_is_scenario(ctx):
         rx_not_scenario(ctx, name)
         return
@@ -6351,16 +6958,23 @@ def rc_scenario_v05(ctx):
     def expect(cond, text):
         if not cond:
             p.append(text)
+    kept = rx_frozen(sv.snap(14))
+    kept_keys = {k for k in kept if k[0] == SCENARIO_KEPT and k[1] == "rejected"}
+    expect(len(kept_keys) == 1, f"step 14: rejected locks of {SCENARIO_KEPT} {sorted(map(_k16, kept_keys))}; appendix B gives one")
     m18 = sv.manifest(18) or {}
     rb = m18.get("rollback") or {}
-    expect(rb.get("locked") == SCENARIO_LOCKED, f"step 18: rollback.locked {rb.get('locked')}, appendix B gives {SCENARIO_LOCKED}")
+    expect(rb.get("locked") == SCENARIO_LOCKED, f"step 18: rollback.locked {rb.get('locked')}, appendix B gives {SCENARIO_LOCKED} (debt-intragov's kept lock is already in the target's frozen)")
     expect(rb.get("to") == sv.snap(16).get("id") and rb.get("from") == sv.snap(17).get("id"), f"step 18: rollback {rb.get('from')} to {rb.get('to')}, appendix B gives step 17's to step 16's")
-    for sid in SCENARIO_LOCKED:
-        expect(((m18.get("series") or {}).get(sid) or {}).get("status") == "frozen", f"step 18: {sid} status {((m18.get('series') or {}).get(sid) or {}).get('status')}, a rolled-back lock shows frozen")
+    for sid in SCENARIO_LOCKED + [SCENARIO_KEPT]:
+        expect(((m18.get("series") or {}).get(sid) or {}).get("status") == "frozen", f"step 18: {sid} status {((m18.get('series') or {}).get(sid) or {}).get('status')}, a locked series shows frozen")
     want_sha = {sid: sha256_hex(canon_bytes(sv.obs(17, sid))) for sid in SCENARIO_LOCKED}
+    want18 = {(sid, "rolled-back", sha) for sid, sha in want_sha.items()} | kept_keys
     l18 = rx_locks_of(ctx, m18)
-    expect({k: v.get("candidate_sha256") for k, v in l18.items()} == want_sha and all(v.get("origin") == "rolled-back" for v in l18.values()),
-           f"step 18: locks in force {sorted(l18)}; appendix B gives the five rolled-back on step 17's observations")
+    expect(set(l18) == want18, f"step 18: locks in force {sorted(map(_k16, l18))}; appendix B gives the five rolled-back on step 17's observations and debt-intragov's rejection lock")
+    rec, err, f = rx_rollback_record(ctx, m18)
+    got_rec = [lock_key(x) for x in (rec or {}).get("locks", []) if isinstance(x, dict)]
+    expect(rec is not None and got_rec == [(sid, "rolled-back", want_sha[sid]) for sid in SCENARIO_LOCKED],
+           f"step 18: rollback record archive/rollbacks/{f} {'locks ' + str([_k16(k) for k in got_rec]) if rec is not None else err}; appendix B gives the five rolled-back locks in registry order (debt-intragov's lock is in the target's frozen, so not listed)")
     for sid, sha in want_sha.items():
         expect(rv.read(rv.holds, f"{sid}/{sha[:16]}.json") == canon_bytes(sv.obs(17, sid)), f"step 18: {sid}'s withdrawn observations are not its locked candidate in archive/holds/")
     r19 = sv.record(19) or {}
@@ -6368,10 +6982,9 @@ def rc_scenario_v05(ctx):
            f"step 19: restore record {r19.get('trigger')}, {r19.get('outcome')}, snapshot {r19.get('snapshot')}")
     if is_time(r19.get("ended_at")):
         l19 = rx_locks_at(ctx, r19["ended_at"], True)
-        expect(sorted(l19) == sorted(SCENARIO_LOCKED), f"step 19: locks after the restore {sorted(l19)}")
-    debt = list(DEBT_SERIES)
+        expect(set(l19) == want18, f"step 19: locks after the restore {sorted(map(_k16, l19))}")
     s20, r20 = sv.snap(20), sv.record(20) or {}
-    for sid in debt:
+    for sid in ("debt-total", "debt-held-public"):
         o16, o20 = sv.obs(16, sid), sv.obs(20, sid)
         k16 = {observation_key(o): rx_bare(o) for o in o16}
         new = [observation_key(o) for o in o20 if observation_key(o) not in k16]
@@ -6380,21 +6993,26 @@ def rc_scenario_v05(ctx):
                f"step 20: {sid} status {sv.status(20, sid)}, {len(new)} new period(s) {new}; appendix B gives three new days appended, nothing else changed")
     fz20 = rx_frozen(s20)
     for sid in SCENARIO_LOCKED:
-        e = fz20.get(sid) or {}
+        es = locks_of_series(fz20, sid)
+        e = es[0] if len(es) == 1 else {}
         expect(e.get("origin") == "rolled-back" and e.get("candidate_sha256") == want_sha[sid] and e.get("frozen_at") == SCENARIO_STEPS[17][0] and e.get("reason") == rb.get("reason"),
-               f"step 20: frozen entry of {sid} {e}; the rollback's lock carried forward (rolled-back, step 17's observations, {SCENARIO_STEPS[17][0]}, the rollback's reason)")
+               f"step 20: frozen entries of {sid} {es}; the rollback's lock carried forward (rolled-back, step 17's observations, {SCENARIO_STEPS[17][0]}, the rollback's reason)")
+    for sid in SCENARIO_LOCKED + [SCENARIO_KEPT]:
         expect(sv.status(20, sid) == "carried-forward" and (s20.get("series", {}).get(sid) or {}).get("objects") == (sv.snap(16).get("series", {}).get(sid) or {}).get("objects"),
                f"step 20: {sid} status {sv.status(20, sid)}; a locked series publishes nothing (objects of step 16)")
         expect((r20.get("series") or {}).get(sid) == "revised-unexpected" and f"frozen:{sid}" in (r20.get("alerts") or []),
-               f"step 20: {sid} outcome {(r20.get('series') or {}).get(sid)}, alerts frozen:{sid} {f'frozen:{sid}' in (r20.get('alerts') or [])}; the source still serves the withdrawn data: revised-unexpected, frozen alert (17.3)")
-    expect(sorted(fz20) == sorted(SCENARIO_LOCKED), f"step 20: frozen {sorted(fz20)}")
+               f"step 20: {sid} outcome {(r20.get('series') or {}).get(sid)}, alert frozen:{sid} {f'frozen:{sid}' in (r20.get('alerts') or [])}; the source still serves the withdrawn or rejected data: revised-unexpected, frozen alert (17.3)")
+    k20 = {k for k in fz20 if k[0] == SCENARIO_KEPT}
+    expect(k20 == kept_keys and all(fz20[k] == kept[k] for k in k20), f"step 20: {SCENARIO_KEPT} locks {sorted(map(_k16, k20))}; its rejection lock of step 14 carried forward unchanged")
+    expect(set(fz20) == want18, f"step 20: frozen {sorted(map(_k16, fz20))}")
     d21 = [d for d in rx_decisions(ctx) if d.get("decided_at") == SCENARIO_STEPS[20][0]]
     want21 = ("m1-sa", "clear", "example-maintainer", "maintain", SCENARIO_STEPS[20][0], want_sha["m1-sa"], {"outcome": "cleared", "snapshot": sv.snap(21).get("id")})
     got21 = [(d.get("series"), d.get("decision"), d.get("reviewer"), d.get("reviewer_permission"), d.get("permission_checked_at"), d.get("candidate_sha256"), d.get("publication")) for d in d21]
     expect(got21 == [want21], f"step 21: decisions {got21}; appendix B gives {want21}")
-    expect(sorted(rx_frozen(sv.snap(21))) == sorted(x for x in SCENARIO_LOCKED if x != "m1-sa") and sv.status(21, "m1-sa") == "carried-forward"
+    want21_locks = want18 - {("m1-sa", "rolled-back", want_sha["m1-sa"])}
+    expect(set(rx_frozen(sv.snap(21))) == want21_locks and sv.status(21, "m1-sa") == "carried-forward"
            and (sv.snap(21).get("series", {}).get("m1-sa") or {}).get("objects") == (s20.get("series", {}).get("m1-sa") or {}).get("objects"),
-           f"step 21: frozen {sorted(rx_frozen(sv.snap(21)))}, m1-sa {sv.status(21, 'm1-sa')}; the clear lifts m1-sa's lock and publishes nothing")
+           f"step 21: frozen {sorted(map(_k16, rx_frozen(sv.snap(21))))}, m1-sa {sv.status(21, 'm1-sa')}; the clear lifts m1-sa's lock only and publishes nothing")
     s22, r22 = sv.snap(22), sv.record(22) or {}
     expect(sv.status(22, "m1-sa") == "refreshed" and (r22.get("series") or {}).get("m1-sa") == "revised-expected",
            f"step 22: m1-sa status {sv.status(22, 'm1-sa')}, outcome {(r22.get('series') or {}).get('m1-sa')}; appendix B gives an expected revision")
@@ -6407,14 +7025,14 @@ def rc_scenario_v05(ctx):
     logged = {ref.get("path", "").split("/")[1] for ref in s22.get("revisions", []) if isinstance(ref.get("path"), str) and ref["path"].count("/") >= 2}
     expect(logged == {"m1-sa"}, f"step 22: revision logs written for {sorted(logged)}; only m1-sa is republished")
     expect("revision-large:m1-sa" in (r22.get("alerts") or []), f"step 22: alerts {r22.get('alerts')}; appendix B gives revision-large:m1-sa")
-    for sid in SCENARIO_LOCKED[:1] + SCENARIO_LOCKED[2:]:
+    for sid in [x for x in SCENARIO_LOCKED if x != "m1-sa"]:
         expect(sv.status(22, sid) == "carried-forward" and (s22.get("series", {}).get(sid) or {}).get("objects") == (sv.snap(16).get("series", {}).get(sid) or {}).get("objects")
-               and sid in rx_frozen(s22) and f"frozen:{sid}" in (r22.get("alerts") or []),
-               f"step 22: {sid} status {sv.status(22, sid)}, locked {sid in rx_frozen(s22)}; the other four locked series publish nothing")
-    expect(sorted(rx_frozen(s22)) == sorted(x for x in SCENARIO_LOCKED if x != "m1-sa"), f"step 22: frozen {sorted(rx_frozen(s22))}")
+               and sid in lock_series(rx_frozen(s22)) and f"frozen:{sid}" in (r22.get("alerts") or []),
+               f"step 22: {sid} status {sv.status(22, sid)}, locked {sid in lock_series(rx_frozen(s22))}; the other four locked series publish nothing")
+    expect(set(rx_frozen(s22)) == want21_locks, f"step 22: frozen {sorted(map(_k16, rx_frozen(s22)))}, appendix B gives the four rolled-back locks and debt-intragov's rejection lock")
     live = ctx.manifest or {}
     expect((live.get("snapshot") or {}).get("id") == s22.get("id") and live.get("rollback") is None, f"the live manifest names {(live.get('snapshot') or {}).get('id')} with rollback {live.get('rollback')}; after step 22 it names step 22's snapshot, rollback null")
-    check(name, p, f"locks {', '.join(SCENARIO_LOCKED)}; reason {rb.get('reason')!r}")
+    check(name, p, f"locks {', '.join(SCENARIO_LOCKED)} and {SCENARIO_KEPT} (rejected); reason {rb.get('reason')!r}")
 
 
 # --- T87 to T93: CSV segments (9, 12.9, 16, 17.6, appendix C1) ---
@@ -6612,7 +7230,7 @@ def rc_refusals(ctx):
             p.append(f"{w}: the manifest in place changed from {before[0]} to {after[0]} during the refused run (11.5: a refused attempt changes no published, held or frozen state)")
         state = ctx.snaps.get(((before[1] or {}).get("snapshot") or {}).get("id")) or {}
         held = {h.get("series"): (h.get("candidate") or {}).get("sha256") for h in state.get("holds", [])}
-        locks = {k: e.get("candidate_sha256") for k, e in rx_locks_of(ctx, before[1]).items()}  # 11.5: the locks in force at the start
+        locks = lock_shas(rx_locks_of(ctx, before[1]))  # 11.5: the locks in force at the start, series to their hashes (v0.6)
         pc = r.get("permission_checked_at")
         first, order = refusal_rule(r.get("decision"), r.get("series"), r.get("candidate_sha256"), r.get("reviewer"), r.get("reviewer_permission"), pc, at, held, locks, perms)
         got = r.get("refused")
@@ -6663,18 +7281,17 @@ def rc_publication_outcomes(ctx):
             if err or canon_bytes(cand) != canon_bytes(rx_obs(ctx, state)) or state.get("status") != "refreshed":
                 p.append(f"{w}: snapshot {snap_id} does not publish exactly the candidate {str(sha)[:16]} (status {state.get('status')})")
         elif d.get("decision") == "reject":
-            fz = rx_frozen(s).get(sid)
-            if fz is None or fz.get("candidate_sha256") != sha or fz.get("origin") != "rejected" or state.get("status") != "carried-forward":
-                p.append(f"{w}: snapshot {snap_id} does not lock {sid} with origin rejected on candidate {str(sha)[:16]} (lock {fz}, status {state.get('status')})")
+            if (sid, "rejected", sha) not in rx_frozen(s) or state.get("status") != "carried-forward":
+                p.append(f"{w}: snapshot {snap_id} does not lock {sid} with origin rejected on candidate {str(sha)[:16]} (locks {sorted(map(_k16, rx_frozen(s)))}, status {state.get('status')})")
         elif d.get("decision") == "clear":
-            # 11.5, 17.5 (v0.5): a lock lifted in that snapshot, nothing published in that run.
-            before = rx_locks_at(ctx, d["decided_at"], inclusive=False).get(sid) if is_time(d.get("decided_at")) else None
+            # 11.5, 17.5 (v0.5, v0.6): the lock named by its hash lifted in that snapshot, nothing published in that run.
+            before = rx_locks_at(ctx, d["decided_at"], inclusive=False) if is_time(d.get("decided_at")) else {}
             m_now = next((m for _, m, e in ctx.arch_manifests if not e and (m.get("snapshot") or {}).get("id") == snap_id and m.get("generated_at") == d.get("decided_at")), None)
             base = ctx.snaps.get(rx_base_id(ctx, snap_id)) or {}
-            if before is None or before.get("candidate_sha256") != sha:
+            if not any(k[0] == sid and k[2] == sha for k in before):
                 p.append(f"{w}: no lock on candidate {str(sha)[:16]} was in force before the run")
-            if sid in rx_locks_of(ctx, m_now):
-                p.append(f"{w}: snapshot {snap_id} still locks {sid}")
+            if any(k[0] == sid and k[2] == sha for k in rx_locks_of(ctx, m_now)):
+                p.append(f"{w}: snapshot {snap_id} still has the lock of {sid} on candidate {str(sha)[:16]}")
             if state.get("status") != "carried-forward" or state.get("objects") != base.get("series", {}).get(sid, {}).get("objects"):
                 p.append(f"{w}: snapshot {snap_id} publishes something for {sid} (status {state.get('status')}); a clear publishes nothing in its own run")
         elif d.get("decision") == "withdrawn":
@@ -6701,8 +7318,9 @@ def rc_candidates_kept(ctx):
                 replaced.add((series_id, current[series_id]))
         current = now_held
     decided = {(d.get("series"), d.get("candidate_sha256")): d.get("decision") for d in rx_decisions(ctx)}
-    _, _, lock_first = rx_lock_history(ctx)
-    rolled = {k for k, i in lock_first.items() if k not in held_ever}  # 17.5 (v0.5): a rollback's locked candidate was never held
+    _, _, lock_first, _ = rx_lock_history(ctx)
+    lock_cands = {(k[0], k[2]) for k in lock_first}
+    rolled = {k for k in lock_cands if k not in held_ever}  # 17.5 (v0.5): a rollback's locked candidate was never held
     for (series_id, sha), first in sorted(held_ever.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1]))):
         data = rv.read(rv.holds, f"{series_id}/{str(sha)[:16]}.json")
         if data is None:
@@ -6710,7 +7328,7 @@ def rc_candidates_kept(ctx):
         elif sha256_hex(data) != sha:
             p.append(f"archive/holds/{series_id}/{str(sha)[:16]}.json has sha256 {sha256_hex(data)[:16]}, the hold names {str(sha)[:16]}")
     for key, dec in decided.items():
-        if key not in held_ever and not (dec == "clear" and key in lock_first):
+        if key not in held_ever and not (dec == "clear" and key in lock_cands):
             p.append(f"the {dec} decision on {key[0]} candidate {str(key[1])[:16]} names a candidate no snapshot ever held")
     doc, _ = rv.load(rv.state, "review-queue.json")
     for e in ((doc or {}).get("frozen") or []) + ((doc or {}).get("open") or []) if isinstance(doc, dict) else []:
@@ -6729,21 +7347,56 @@ def rc_candidates_kept(ctx):
 # --- T98 to T102: absences, unknown zones, due, route alerts, windowed candidates (5, 11.6, 14.2, 17.3, 17.8) ---
 
 
-def rx_candidate_lookup(ctx, snapshot, manifest=None):
+def rx_candidate_lookup(ctx, snapshot, manifest=None, rec=None):
     """has_record(series, period) for the held candidates of a snapshot and the locked
-    candidates in force under its manifest (11.6; v0.5: the locks include rollback.locked)."""
+    candidates in force under its manifest (11.6; v0.5: the locks include rollback.locked;
+    v0.6: every lock of a series, and the rollback record's locks).
+    v0.6: a locked series' candidate of this run is kept nowhere, yet 11.6 does not list a period
+    present in it. reading: for a locked series whose outcome is revised-unexpected, a period is
+    taken as present when a series sharing its request (11.3) whose candidate of this run is
+    published or held after the run has it (Debt to the Penny gives every record date an
+    observation in all three series, 17.3); with no such series to tell, the period is optional."""
     held = {h.get("series"): (h.get("candidate") or {}).get("sha256") for h in (snapshot or {}).get("holds", [])}
-    frozen = {k: v.get("candidate_sha256") for k, v in (rx_locks_of(ctx, manifest) if manifest else rx_frozen(snapshot)).items()}
+    locks = rx_locks_of(ctx, manifest) if manifest else rx_frozen(snapshot)
+    shas = {}
+    for sid, sha in held.items():
+        shas.setdefault(sid, set()).add(sha)
+    for k in locks:
+        shas.setdefault(k[0], set()).add(k[2])
     cache = {}
+    outcomes = (rec or {}).get("series") or {}
+    grp = request_group_of(ctx.st)
+    states = (snapshot or {}).get("series") or {}
+
+    def periods_of(sid, sha):
+        if (sid, sha) not in cache:
+            v, err = ctx.rv.load(ctx.rv.holds, f"{sid}/{str(sha)[:16]}.json")
+            cache[(sid, sha)] = {observation_key(o) for o in v if isinstance(o, dict)} if not err and isinstance(v, list) else set()
+        return cache[(sid, sha)]
+
+    def sibling_periods(sid):
+        key = ("siblings", sid)
+        if key not in cache:
+            found = None
+            for other, ser in ctx.st.series.items():
+                if other == sid or grp.get(other) != grp.get(sid) or ser["frequency"] != ctx.st.series[sid]["frequency"]:
+                    continue
+                if lock_series(locks) & {other} or outcomes.get(other) not in ("appended", "revised-expected", "unchanged", "revised-unexpected"):
+                    continue
+                if other in held:
+                    found = (found or set()) | periods_of(other, held[other])
+                elif outcomes.get(other) != "revised-unexpected":
+                    found = (found or set()) | {observation_key(o) for o in rx_obs(ctx, states.get(other) or {}) if isinstance(o, dict)}
+            cache[key] = found
+        return cache[key]
 
     def has_record(sid, period):
-        sha = held.get(sid) or frozen.get(sid)
-        if not sha:
-            return False
-        if sha not in cache:
-            v, err = ctx.rv.load(ctx.rv.holds, f"{sid}/{str(sha)[:16]}.json")
-            cache[sha] = {observation_key(o) for o in v if isinstance(o, dict)} if not err and isinstance(v, list) else set()
-        return period in cache[sha]
+        if any(period in periods_of(sid, sha) for sha in shas.get(sid, ())):
+            return True
+        if sid in lock_series(locks) and sid not in held and outcomes.get(sid) == "revised-unexpected":
+            sib = sibling_periods(sid)
+            return True if sib is None else period in sib
+        return False
     return has_record
 
 
@@ -6758,7 +7411,7 @@ def rc_absences(ctx):
         _, m_after = rx_manifest_at(ctx, rec["ended_at"], inclusive=True)
         s_after = ctx.snaps.get(((m_after or {}).get("snapshot") or {}).get("id"))
         try:
-            pr, cnt = absences_problems(st, rec, (s_after or {}).get("series", {}), rx_candidate_lookup(ctx, s_after, m_after))
+            pr, cnt = absences_problems(st, rec, (s_after or {}).get("series", {}), rx_candidate_lookup(ctx, s_after, m_after, rec))
         except Exception as exc:
             pr, cnt = [f"run {rec.get('id')}: cannot be recomputed ({type(exc).__name__}: {exc})"], {}
         p98 += pr
@@ -6897,24 +7550,26 @@ def rc_windowed(ctx):
                 b_hold = next(((h.get("candidate") or {}).get("sha256") for h in before.get("holds", []) if h.get("series") == sid), None)
                 a_hold = next(((h.get("candidate") or {}).get("sha256") for h in after.get("holds", []) if h.get("series") == sid), None)
                 published = rx_obs(ctx, b_state)
-                lk = locks_b.get(sid)
+                # 5 (v0.6, E3): a locked series assembles its windowed candidate like any other series:
+                # over its held candidate when held, else over the published observations; never over a locked candidate.
                 if b_hold:
                     base, label = load_cand(sid, b_hold), f"the held candidate {str(b_hold)[:16]}"
-                elif lk is not None:
-                    # 5 (v0.5): a locked series assembles its windowed candidate over its locked candidate.
-                    base, label = load_cand(sid, lk.get("candidate_sha256")), f"the locked candidate {str(lk.get('candidate_sha256'))[:16]}"
                 else:
                     base, label = published, "the published observations"
-                if lk is not None and lk.get("origin") == "rejected":
-                    # T112: a locked change before the window is carried by a candidate assembled over
-                    # the locked candidate, so a windowed run can never lift that lock.
+                for k, lk in sorted(locks_b.items(), key=lambda kv: tuple(map(str, kv[0]))):
+                    if k[0] != sid:
+                        continue
+                    # T112 (v0.6): a lock with a locked change before the window's first period stays in force
+                    # on a windowed run whatever the candidate shows; only a request covering every locked change lifts it.
+                    _, locked, changes = rx_lock_detail(ctx, sid, lk)
+                    old = [c for c in (changes or []) if str(c[0]) < start]
+                    if not old:
+                        continue
                     n112 += 1
-                    after_lk = locks_a.get(sid)
-                    if after_lk is None or after_lk.get("candidate_sha256") != lk.get("candidate_sha256"):
-                        _, locked, changes = rx_lock_detail(ctx, sid, lk)
-                        old = [c for c in (changes or []) if str(c[0]) < start]
-                        if old:
-                            p112.append(f"run {rec.get('id')} {sid} (window from {start}): the rejected lock was lifted although {len(old)} locked change(s) lie before the window, e.g. {old[:2]}; a windowed candidate assembled over the locked candidate carries them (5, 11.5)")
+                    if k not in locks_a:
+                        p112.append(f"run {rec.get('id')} {sid} (window from {start}): the {k[1]} lock {str(k[2])[:16]} was lifted although {len(old)} of its locked change(s) lie before the window, e.g. {old[:2]} (5, 11.5 v0.6: it stays in force on that run)")
+                    if a_hold and not b_hold and k in locks_a:
+                        p112.append(f"run {rec.get('id')} {sid}: newly held while its lock {str(k[2])[:16]} stands (17.3: a locked series is not held again)")
                 if base is None:
                     p.append(f"run {rec.get('id')} {sid}: the held candidate {str(b_hold)[:16]} is not readable")
                     continue
@@ -6922,17 +7577,17 @@ def rc_windowed(ctx):
                 if a_hold:
                     cand = load_cand(sid, a_hold)
                     if cand is not None and before_start(cand, start) != before_start(base, start):
-                        p.append(f"{w}: the held candidate {str(a_hold)[:16]} before the window differs from {label}; 5 assembles a held series' candidate over its held candidate, a locked one over its locked candidate, and anything else over the published observations")
+                        p.append(f"{w}: the held candidate {str(a_hold)[:16]} before the window differs from {label}; 5 (v0.6) assembles a held series' candidate over its held candidate and every other series' (a locked one too) over the published observations")
                 elif a_state.get("objects") != b_state.get("objects"):
                     if before_start(rx_obs(ctx, a_state), start) != before_start(base, start):
                         p.append(f"{w}: the observations published before the window differ from {label} in a windowed run (5: periods before the window come from it)")
                 elif b_hold and not a_hold:
                     if before_start(base, start) != before_start(published, start):
                         p.append(f"{w}: the hold was withdrawn as an exact return, but the held candidate's history before the window differs from the published data, so the assembled candidate could not equal it (5, 11.5)")
-    check("T102 windowed candidates (5): in a weekday run that requests a 60-day window, the observations before the window come from the held candidate for a held series, from the locked candidate for a locked series (v0.5), and from the published observations otherwise; a published series never changes before the window otherwise", p,
+    check("T102 windowed candidates (5 v0.6): in a weekday run that requests a 60-day window, the observations before the window come from the held candidate for a held series and from the published observations for every other series, a locked one included (never from a locked candidate); a published series never changes before the window otherwise", p,
           f"{n} series candidate(s) in windowed runs")
-    check("T112 a rejected lock with a locked change older than the window is never lifted by a windowed run: its candidate, assembled over the locked candidate, carries that change until a full fetch shows otherwise (5, 11.5)", p112,
-          f"{n112} locked series candidate(s) in windowed runs")
+    check("T112 a lock with a locked change before the window's first period stays in force on a windowed run whatever the candidate shows, and its series is not held again; only a request covering every locked change can lift it (5, 11.5 v0.6)", p112,
+          f"{n112} lock(s) with a locked change before the window in windowed runs")
 
 
 def rc_provenance(ctx):
@@ -6948,7 +7603,7 @@ def rc_provenance(ctx):
             # v0.5: a clear removes one lock and no hold; approve and reject remove one hold.
             m_now = next((m for _, m, e in ctx.arch_manifests if not e and m.get("generated_at") == s.get("created_at") and (m.get("snapshot") or {}).get("id") == sid_), None)
             locks_before = rx_locks_at(ctx, s["created_at"], inclusive=False) if is_time(s.get("created_at")) else {}
-            cleared = sorted(x for x in locks_before if x not in rx_locks_of(ctx, m_now)) if m_now else []
+            cleared = sorted({k[0] for k in locks_before if k not in rx_locks_of(ctx, m_now)}) if m_now else []  # v0.6: series whose lock(s) were lifted
             if len(reviewed) + len(cleared) != 1:
                 p.append(f"{sid_}: a review run removes the hold or the lock of the reviewed series and nothing else; holds removed against {base_id}: {reviewed}, locks lifted: {cleared}")
             reviewed = reviewed + cleared
@@ -7170,7 +7825,7 @@ def rc_window(ctx):
 
 def rc_review_queue(ctx):
     rv, st = ctx.rv, ctx.st
-    name = "T69 review-queue.json: schema rmf.econ.review-queue/3, open entries with the 17.5 fields that match the current snapshot's holds and candidates, a frozen list (its entries: T109), decisions with their fields, a refusals list"
+    name = "T69 review-queue.json: schema rmf.econ.review-queue/4, open entries with the 17.5 fields that match the current snapshot's holds and candidates, a frozen list (its entries: T109), decisions with their fields, a refusals list"
     doc, err = rv.load(rv.state, "review-queue.json")
     if err:
         check(name, [f"archive/state/review-queue.json: {err}"])
@@ -7259,7 +7914,7 @@ def rc_review_queue(ctx):
 def rc_queue_locks(ctx):
     """T109: the review queue's frozen entries against the locks in force (11.5, 17.5)."""
     rv = ctx.rv
-    name = "T109 review-queue.json frozen: one entry per lock in force in the published state (the live manifest's snapshot frozen plus its rollback.locked), each with series, candidate_sha256, origin, frozen_at and reason as the lock; for a rejected lock the run, reviewer, reason and affected_periods of its reject decision; for a rolled-back lock the rollback's run, reviewer null, the rollback's reason; locked_changes exactly the 11.5 pairs recomputed from the archive, in period order (11.5, 17.5)"
+    name = "T109 review-queue.json frozen (review-queue/4): exactly one entry per lock in force in the published state (the live manifest's snapshot frozen plus, after a rollback, its rollback record's locks), a series once per lock (v0.6); each with series, candidate_sha256, origin, frozen_at and reason as the lock; for a rejected lock the run, reviewer, reason and affected_periods of its reject decision; for a rolled-back lock the rollback's run, reviewer null, the rollback's reason; locked_changes exactly the 11.5 pairs recomputed from the archive (v0.6: new periods count for both origins), in period order, and equal to the rollback record's (11.5, 17.5)"
     doc, err = rv.load(rv.state, "review-queue.json")
     if err or not isinstance(doc, dict):
         check(name, [f"archive/state/review-queue.json: {err or 'not an object'}"])
@@ -7279,13 +7934,14 @@ def rc_queue_locks(ctx):
         if not isinstance(e, dict):
             continue
         sid = e.get("series")
-        seen.append(sid)
-        w = f"frozen[{i}] {sid}"
-        lk = locks.get(sid)
+        k = lock_key(e)
+        seen.append(k)
+        w = f"frozen[{i}] {_k16(k)}"
+        lk = locks.get(k)
         if lk is None:
-            p.append(f"{w}: not locked in the published state (11.5: a queue entry the published state does not list is dropped)")
+            p.append(f"{w}: not a lock in force in the published state (11.5: a queue entry the published state does not list is dropped)")
             continue
-        for f in ("candidate_sha256", "origin", "frozen_at", "reason"):
+        for f in ("frozen_at", "reason"):
             if e.get(f) != lk.get(f):
                 p.append(f"{w}: {f} {e.get(f)!r}, the published lock has {lk.get(f)!r}")
         if lk.get("origin") == "rejected":
@@ -7320,12 +7976,16 @@ def rc_queue_locks(ctx):
             p.append(f"{w}: locked_changes differ from the {len(want)} pair(s) recomputed for a {lk.get('origin')} lock: missing {miss[:4]}, not a change {extra[:4]} (11.5)")
         if len(set(pairs)) != len(pairs):
             p.append(f"{w}: a locked change is listed twice")
+        if isinstance(lk.get("locked_changes"), list):
+            rec_pairs = sorted((c.get("period"), c.get("field")) for c in lk["locked_changes"] if isinstance(c, dict))
+            if rec_pairs != sorted(pairs):
+                p.append(f"{w}: locked_changes differ from the rollback record's for this lock (17.5 v0.6)")
         if lk.get("origin") == "rolled-back":
             # reading: the affected periods of a rolled-back lock are the periods of its locked changes.
             if e.get("affected_periods") != sorted({x for x, _ in want}):
                 p.append(f"{w}: affected_periods {e.get('affected_periods')!r:.80}, the periods of its locked changes are {sorted({x for x, _ in want})[:6]}")
     if sorted(map(str, seen)) != sorted(map(str, locks)) or len(set(seen)) != len(seen):
-        p.append(f"frozen entries {seen}, the locks in force are {sorted(locks)} (17.5: one entry per locked series)")
+        p.append(f"frozen entries {[_k16(x) for x in seen]}, the locks in force are {sorted(map(_k16, locks))} (17.5 v0.6: one entry per lock)")
     check(name, p, f"{len(fz)} entr{'y' if len(fz) == 1 else 'ies'}, {len(locks)} lock(s) in force, {n_changes} locked change(s) recomputed")
 
 
@@ -7419,14 +8079,17 @@ def rc_alerts(ctx):
     for sid in sorted(held, key=str):
         if f"hold:{sid}" not in keys:
             p.append(f"the current snapshot holds {sid} but the ledger has no open alert hold:{sid} (11.5: an alert opens)")
-    locks_now = rx_locks_of(ctx, ctx.manifest)  # 11.5 (v0.5): the locks in force, rollback.locked included
-    frozen_now = set(locks_now)
+    locks_now = rx_locks_of(ctx, ctx.manifest)  # 11.5 (v0.6): the locks in force, the rollback record's included
+    frozen_now = lock_series(locks_now)
     bodies = {str(a.get("key")): str(a.get("body")) for a in opens if isinstance(a, dict)}
     for sid in sorted(frozen_now, key=str):
         if f"frozen:{sid}" not in keys:
             p.append(f"{sid} is locked in the published state but the ledger has no open alert frozen:{sid} (11.5: it lasts while the series is locked)")
-        elif str(locks_now[sid].get("origin")) not in bodies.get(f"frozen:{sid}", ""):
-            p.append(f"alert frozen:{sid}: the body does not name the origin {locks_now[sid].get('origin')!r} (17.8)")
+            continue
+        # 17.8: the body names the origin. reading (v0.6): with several locks, every origin among them.
+        for origin in sorted({str(e.get("origin")) for e in locks_of_series(locks_now, sid)}):
+            if origin not in bodies.get(f"frozen:{sid}", ""):
+                p.append(f"alert frozen:{sid}: the body does not name the origin {origin!r} of one of its locks (17.8)")
     for key in keys:
         if key.startswith("frozen:") and key[7:] not in frozen_now:
             p.append(f"alert {key} is open but that series is not locked in the published state")
@@ -7569,7 +8232,7 @@ def rc_runs(ctx):
                 got = s.get("series", {}).get(series_id, {}).get("status")
                 if got == "held" and outcome in ("not-due", "invalid", "failed") and any(h.get("series") == series_id for h in s.get("holds", [])):
                     continue  # reading: a hold stays open when its refresh fails
-                if outcome == "unchanged" and got == "carried-forward" and series_id in rx_locks_of(ctx, next((m for _, m, e in ctx.arch_manifests if not e and (m.get("snapshot") or {}).get("id") == sid_), None)):
+                if outcome == "unchanged" and got == "carried-forward" and series_id in lock_series(rx_locks_of(ctx, next((m for _, m, e in ctx.arch_manifests if not e and (m.get("snapshot") or {}).get("id") == sid_), None))):
                     continue  # reading: 17.3 says a locked series with outcome unchanged "is carried forward"
                 if got not in to_status.get(outcome, set()):
                     p.append(f"snapshot {sid_} {series_id}: run outcome {outcome} gives {sorted(to_status.get(outcome, set()))}, the snapshot says {got} (8, 17.3)")
@@ -7664,13 +8327,38 @@ def section_root(st, root):
 # ---------------------------------------------------------------------------
 
 
+def compare_mode(collection, out):
+    """20.4 (v0.6): the comparison mode lives in compare_saved.py beside this file, loaded by its
+    path (python -I keeps this folder off sys.path); it shares no code with the pipeline."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "compare_saved.py"
+    spec = importlib.util.spec_from_file_location("rmf_check_compare_saved", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.run(collection, out, ROOT)
+
+
+USAGE = ("usage: python -I tests/datacheck/check_p22.py [--root <dir>]\n"
+         "       python -I tests/datacheck/check_p22.py --compare-saved <collection dir> [--compare-out <file.json>]")
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     root = None
+    if "--compare-saved" in argv:
+        opts, rest = {}, list(argv)
+        while rest:
+            flag = rest.pop(0)
+            if flag in ("--compare-saved", "--compare-out") and rest and flag not in opts:
+                opts[flag] = rest.pop(0)
+            else:
+                print(USAGE)
+                return 2
+        return compare_mode(opts["--compare-saved"], opts.get("--compare-out"))
     if argv[:1] == ["--root"] and len(argv) == 2:
         root = argv[1]
     elif argv:
-        print("usage: python -I tests/datacheck/check_p22.py [--root <dir>]")
+        print(USAGE)
         return 2
     print(f"check_p22.py: independent checker for DATA_CONVENTIONS {CONVENTIONS} (repository {ROOT})")
     st = load_state()

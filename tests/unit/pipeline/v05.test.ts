@@ -285,10 +285,9 @@ describe('the lock rules', () => {
   const s = inputs.registry.series.find((x: Loose) => x.id === 'debt-total');
   const ob = (period: string, value: string) => ({ period, value, released: { date: null, basis: 'not-recorded' }, flags: [] });
   const published = [ob('2026-11-09', '1.00'), ob('2026-11-10', '2.00'), ob('2026-11-12', '3.00')];
-  it('names the changed members, and new periods only for a rollback', () => {
+  it('names every changed member and every new period, for both origins (v0.6)', () => {
     const locked = [ob('2026-11-09', '1.00'), ob('2026-11-10', '2.50'), ob('2026-11-11', '9.00'), ob('2026-11-12', '3.00'), ob('2026-11-13', '4.00')];
-    expect(lockedChanges(s, published, locked, 'rejected')).toEqual([{ period: '2026-11-10', field: 'value' }, { period: '2026-11-11', field: 'period' }]);
-    expect(lockedChanges(s, published, locked, 'rolled-back')).toEqual([{ period: '2026-11-10', field: 'value' }, { period: '2026-11-11', field: 'period' }, { period: '2026-11-13', field: 'period' }]);
+    expect(lockedChanges(s, published, locked)).toEqual([{ period: '2026-11-10', field: 'value' }, { period: '2026-11-11', field: 'period' }, { period: '2026-11-13', field: 'period' }]);
   });
   it('tells whether a candidate still carries a locked change, for members, inserted and removed periods', () => {
     const locked = [ob('2026-11-09', '1.00'), ob('2026-11-10', '2.50'), ob('2026-11-11', '9.00')];
@@ -312,7 +311,9 @@ describe('the lock rules', () => {
   });
   it('turns away a live collection before it touches the root', async () => {
     const root = newRoot();
-    await expect(collect({ mode: 'live', root })).rejects.toThrow(/live collection is not activated/);
+    await expect(collect({ mode: 'live', root })).rejects.toThrow(/state store refused/);
+    // With a verified, empty state store but no authorization, the pipeline itself refuses.
+    await expect(collect({ mode: 'live', root, state: newRoot(), env: {}, transportRequest: () => { throw new Error('no network in tests'); } })).rejects.toThrow(/live collection is not activated/);
     expect(existsSync(join(root, 'archive'))).toBe(false);
   });
 });

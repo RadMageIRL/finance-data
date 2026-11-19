@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.rollback/1",
+  "title": "One rollback, append-only (DATA_CONVENTIONS 17.5, v0.6)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "from",
+    "to",
+    "at",
+    "run",
+    "reason",
+    "locks"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.rollback/1"
+    },
+    "from": {
+      "type": "string",
+      "pattern": "^\\d{8}T\\d{6}Z$"
+    },
+    "to": {
+      "type": "string",
+      "pattern": "^\\d{8}T\\d{6}Z$"
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "run": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "locks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "series",
+          "origin",
+          "candidate_sha256",
+          "locked_changes"
+        ],
+        "properties": {
+          "series": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "origin": {
+            "enum": [
+              "rejected",
+              "rolled-back"
+            ]
+          },
+          "candidate_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "locked_changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "period",
+                "field"
+              ],
+              "properties": {
+                "period": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$"
+                },
+                "field": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

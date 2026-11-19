@@ -74,6 +74,21 @@ export function registryProblems(registry) {
       if (!ok) add(`calendar ${id}`, 'an unknown zone needs at least two distinct candidates in the order America/New_York, UTC');
     } else if (candidates !== undefined) add(`calendar ${id}`, 'zone candidates are allowed only with an unknown zone');
   }
+  // Accepted zeros (v0.6, 2.3, 4.4): one period and one field each, on a refuse_zero era, never a
+  // period after the date it was checked or authorized, never a pattern or a class.
+  for (const s of registry.series ?? []) {
+    const seen = new Set();
+    for (const z of s.accepted_zeros ?? []) {
+      const where = `series ${s.id} accepted zero ${z.period}`;
+      const era = s.extract.find((e) => e.from <= z.period && (e.to === null || z.period <= e.to));
+      if (!era || era.refuse_zero !== true) add(where, 'the period is not in an era with refuse_zero');
+      if (z.field !== 'value') add(where, 'only the value field may be accepted');
+      if (!(z.period <= z.checked) || !(z.period <= String(z.authorized_at).slice(0, 10))) add(where, 'names a period after the date it was checked or authorized');
+      if (/\[bot\]$/i.test(String(z.authorized_by))) add(where, 'must be authorized by a person');
+      if (seen.has(z.period)) add(where, 'duplicate period');
+      seen.add(z.period);
+    }
+  }
   // Who may decide a hold (4.2): exactly the GitHub roles with write access, in this order.
   if ((registry.family_policy?.review?.permissions ?? []).join() !== 'admin,maintain,write') add('family_policy', 'review permissions must be admin, maintain, write');
   for (const [id, src] of Object.entries(registry.sources ?? {})) {

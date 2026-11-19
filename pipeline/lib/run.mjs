@@ -22,7 +22,7 @@ const bytes = (text) => Buffer.byteLength(text, 'utf8');
 const PIPELINE_DIR = fileURLToPath(new URL('..', import.meta.url));
 const NYP = (at, outcome = 'not-due', error = null) => ({ objects: [], last_period: null, observation_count: 0, status: 'not-yet-published', retrieved_at: null, checked_at: null, attempt: { at, outcome, error }, source_marker: null });
 const category = (status) => (status === 'not-yet-published' ? 'unpublished' : status === 'held' ? 'held' : 'published');
-const emptyQueue = () => ({ schema: 'rmf.econ.review-queue/3', open: [], frozen: [], decisions: [], refusals: [] });
+const emptyQueue = () => ({ schema: 'rmf.econ.review-queue/4', open: [], frozen: [], decisions: [], refusals: [] });
 const emptyCollector = () => ({ schema: 'rmf.econ.collector/1', sources: {}, invalid_series: [], source_gaps: {}, gate_failed: false, archive_bytes_by_month: {}, hold_meta: {} });
 /** At most this many undocumented gaps of a series are listed (11.6); the alert gives the count. */
 const MAX_GAPS = 50;
@@ -52,16 +52,15 @@ function candidateObservations(p, seriesId, sha, stagedHolds = null) {
 
 /**
  * The locked changes of a lock (11.5): the (period, field) pairs in which the locked candidate
- * differs from the published observations. A rejected lock leaves out periods after the last
- * published one; a rolled-back lock counts every difference.
+ * differs from the published observations. Every difference counts, new periods included, for both
+ * origins (v0.6): rejected additions stay locked while the source keeps them.
  */
-export function lockedChanges(series, published, locked, origin) {
+export function lockedChanges(series, published, locked) {
   const key = keyOf(series);
   const diff = diffObservations(published, locked, key);
-  const last = published.length ? published[published.length - 1][key] : null;
   const out = [];
   for (const o of diff.removed) out.push({ period: o[key], field: 'period' });
-  for (const p of diff.added) if (origin === 'rolled-back' || (last !== null && p <= last)) out.push({ period: p, field: 'period' });
+  for (const p of diff.added) out.push({ period: p, field: 'period' });
   for (const x of diff.changed) for (const f of x.fields) out.push({ period: x.period, field: f.field });
   return out.sort((a, b) => (a.period < b.period ? -1 : a.period > b.period ? 1 : a.field < b.field ? -1 : a.field > b.field ? 1 : 0));
 }
@@ -84,49 +83,57 @@ export function carriesLock(series, lockedObs, candidate, changes) {
   });
 }
 
+/** The archive path of a rollback's record (17.5, v0.6). */
+export const rollbackRecordPath = (at) => `rollbacks/${snapshotId(at)}.json`;
+/** A lock's identity: its series, origin and candidate (11.5, v0.6). */
+const lockKey = (l) => `${l.series}|${l.origin ?? 'rejected'}|${l.candidate_sha256}`;
+
 /**
- * The locks in force (11.5): the published state is the record, the queue keeps the details.
- * The named snapshot's `frozen` plus the live manifest's `rollback.locked`; a queue entry is used
- * when it matches, and rebuilt from the archive when it is missing (a run that died between its
- * manifest and its state files). Returns a Map of series to lock, each with its observations.
+ * The locks in force (11.5), several per series possible: the published state is the record, the
+ * queue keeps the details. The named snapshot's `frozen`, plus the locks of the rollback record
+ * when the live manifest is a rollback manifest; a queue entry is used when it matches, and the
+ * details are rebuilt from the archive when it is missing (a run that died between its manifest and
+ * its state files). Returns a list of locks, each with its observations.
  */
 function locksInForce(ctx) {
   const snap = ctx.published.snapshot;
   const man = ctx.published.manifest;
-  let list = (snap?.frozen ?? []).map((f) => ({ series: f.series, candidate_sha256: f.candidate_sha256, origin: f.origin ?? 'rejected', frozen_at: f.frozen_at, reason: f.reason }));
-  if (man?.rollback?.locked?.length) {
-    const from = ctx.index.snapshots[man.rollback.from];
-    for (const id of man.rollback.locked) {
-      const withdrawn = store.observationsOf(from, id, ctx.read);
-      list = [...list.filter((x) => x.series !== id), { series: id, candidate_sha256: sha256Hex(canonicalJson(withdrawn)), origin: 'rolled-back', frozen_at: man.rollback.at, reason: man.rollback.reason }];
-    }
+  const list = (snap?.frozen ?? []).map((f) => ({ series: f.series, candidate_sha256: f.candidate_sha256, origin: f.origin ?? 'rejected', frozen_at: f.frozen_at, reason: f.reason, locked_changes: null }));
+  if (man?.rollback) {
+    const text = store.readText(join(ctx.p.root, 'archive', rollbackRecordPath(man.rollback.at)));
+    if (text === null) throw new Error(`the rollback record of ${man.rollback.at} is missing from the archive`);
+    for (const l of JSON.parse(text).locks) list.push({ series: l.series, candidate_sha256: l.candidate_sha256, origin: l.origin, frozen_at: man.rollback.at, reason: man.rollback.reason, locked_changes: l.locked_changes });
   }
-  const out = new Map();
+  const out = [];
+  const seen = new Set();
   for (const l of list) {
+    if (seen.has(lockKey(l))) continue;
+    seen.add(lockKey(l));
     const s = ctx.registry.series.find((x) => x.id === l.series);
     const observations = candidateObservations(ctx.p, l.series, l.candidate_sha256);
     if (!s || !observations) throw new Error(`the locked candidate of ${l.series} is missing from the archive or does not match its hash`);
-    const known = ctx.queue.frozen.find((e) => e.series === l.series && e.candidate_sha256 === l.candidate_sha256);
-    const changes = known?.locked_changes ?? lockedChanges(s, ctx.published.observations[l.series], observations, l.origin);
+    const known = ctx.queue.frozen.find((e) => lockKey(e) === lockKey(l));
+    const changes = known?.locked_changes ?? l.locked_changes ?? lockedChanges(s, ctx.published.observations[l.series], observations);
     const entry = known
       ? { ...known, origin: l.origin }
       : { series: l.series, candidate_sha256: l.candidate_sha256, origin: l.origin, frozen_at: l.frozen_at, run: 'rebuilt-from-published-state', reviewer: null, reason: l.reason, affected_periods: [...new Set(changes.map((x) => x.period))].sort(), locked_changes: changes };
-    out.set(l.series, { ...entry, observations });
+    out.push({ ...entry, observations });
   }
   return out;
 }
 
 /** The queue's `frozen` entries for a list of locks: details without the observations. */
-const queueLocks = (locks) => locks.map(({ observations: _o, ...e }) => e).sort((a, b) => (a.series < b.series ? -1 : 1));
+const queueLocks = (locks) => locks.map(({ observations: _o, ...e }) => e).sort((a, b) => (lockKey(a) < lockKey(b) ? -1 : lockKey(a) > lockKey(b) ? 1 : 0));
 /** A snapshot's `frozen` entry for a lock (8). */
 const snapshotLock = (l) => ({ series: l.series, candidate_sha256: l.candidate_sha256, origin: l.origin, frozen_at: l.frozen_at, reason: l.reason });
 
 function open(o) {
   if (o.mode !== 'fixture' && o.mode !== 'live') throw new Error('run refused: mode must be "fixture" or "live"');
   if (o.mode === 'live') {
-    const blockers = activationProblems(o.activationFacts ?? { pipelineDir: PIPELINE_DIR });
-    // Live collection is not built: a live run is refused even with no blocker listed.
-    throw new Error(`run refused: live collection is not activated (${blockers.length ? blockers.join('; ') : 'no live fetch layer exists'})`);
+    // A nonpublishing live collection (Stage B, 20) runs only with every collection requirement
+    // given; nothing in the pipeline publishes.
+    const blockers = activationProblems({ ...(o.activationFacts ?? {}), pipelineDir: PIPELINE_DIR }, 'collect');
+    if (blockers.length) throw new Error(`run refused: live collection is not activated (${blockers.join('; ')})`);
   }
   // The run id names files: letters, digits, dots, hyphens and underscores only.
   if (typeof o.run?.id !== 'string' || !/^[A-Za-z0-9._-]{1,80}$/.test(o.run.id)) throw new Error('run refused: the run id must be 1 to 80 letters, digits, dots, hyphens or underscores');
@@ -147,13 +154,13 @@ function open(o) {
   };
   // The locks in force come from the published state, whatever the queue says (11.5).
   ctx.locks = locksInForce(ctx);
-  ctx.queue = { ...ctx.queue, frozen: queueLocks([...ctx.locks.values()]) };
+  ctx.queue = { ...ctx.queue, frozen: queueLocks(ctx.locks) };
   return ctx;
 }
 
 /** The review queue as stored, in the current shape (17.5). */
 function readQueue(p) {
-  return { ...emptyQueue(), ...store.readState(p, 'review-queue.json', emptyQueue()), schema: 'rmf.econ.review-queue/3' };
+  return { ...emptyQueue(), ...store.readState(p, 'review-queue.json', emptyQueue()), schema: 'rmf.econ.review-queue/4' };
 }
 
 const stateOf = (ctx, id) => ctx.published.snapshot?.series[id] ?? NYP(ctx.now);
@@ -242,8 +249,9 @@ async function collectGroup(ctx, group, start) {
     return out;
   };
   const pub = (id) => ctx.published.observations[id];
-  // A held or locked series' windowed candidate is assembled over its held or locked candidate (5).
-  const baseOf = (id) => ctx.heldObservations[id] ?? ctx.locks.get(id)?.observations ?? pub(id);
+  // A held series' windowed candidate is assembled over its held candidate (5); a locked series is
+  // assembled like any other (v0.6), its locks judged by the window rule.
+  const baseOf = (id) => ctx.heldObservations[id] ?? pub(id);
   const judge = (s, candidate, extra = {}) => {
     const problems = validateSeries(s, candidate, ctx.runEt, ctx.calendar);
     if (problems.length) {
@@ -320,11 +328,13 @@ function currentAlerts(ctx, { snapshot, frozen = null, runAlerts, measured, reco
     alerts.push({ key: `hold:${h.series}`, severity: 'critical', title: `Held for review: ${h.series}`, body: `Series ${h.series} is held: ${h.reason}. Candidate sha256:${h.candidate.sha256}, ${n.changed} changed, ${n.removed} removed and ${n.added} added period(s). The published data is unchanged until a person approves or rejects the candidate.` });
   }
   // The locks after this run: given by a run that changes them, else the published state (11.5).
-  for (const f of frozen ?? [...ctx.locks.values()]) {
-    const body = f.origin === 'rolled-back'
-      ? `Series ${f.series} is locked (origin rolled-back) since ${f.frozen_at}: a rollback withdrew its data (candidate sha256:${f.candidate_sha256}). Nothing of the withdrawn data is published again until a person with write access clears the lock; other series continue.`
-      : `Series ${f.series} is locked (origin rejected) since ${f.frozen_at}: a person rejected the candidate sha256:${f.candidate_sha256} and the source still carries the rejected change. Nothing of this series is published until the source drops the change or a person with write access clears the lock; other series continue.`;
-    alerts.push({ key: `frozen:${f.series}`, severity: 'warning', title: `Locked series: ${f.series}`, body });
+  const lockList = frozen ?? ctx.locks;
+  for (const id of [...new Set(lockList.map((f) => f.series))].sort()) {
+    const mine = lockList.filter((f) => f.series === id);
+    const origins = [...new Set(mine.map((f) => f.origin ?? 'rejected'))].sort();
+    const since = mine.map((f) => f.frozen_at).sort()[0];
+    const hashes = mine.map((f) => `sha256:${f.candidate_sha256}`).join(', ');
+    alerts.push({ key: `frozen:${id}`, severity: 'warning', title: `Locked series: ${id}`, body: `Series ${id} is locked (origin ${origins.join(' and ')}) since ${since}, candidate ${hashes}. Nothing of this series is published until each lock lifts: a rejected one when the source no longer carries the rejected observations, a rolled-back one only when a person with write access clears it; other series continue.` });
   }
   for (const [id, s] of Object.entries(c.sources).sort(([a], [b]) => (a < b ? -1 : 1))) {
     if (s.blocked) alerts.push({ key: `blocked:${id}`, severity: 'critical', title: `Requests refused by ${id}`, body: `Source ${id} answered ${s.blocked}. No further request was sent to it in that run. A person must check the provider's terms and limits before anything else changes.` });
@@ -384,7 +394,7 @@ function publishCandidate(ctx, c) {
   const { p } = ctx;
   const snapPath = `snapshots/${c.snapshot.id}.json`;
   const snapText = c.staged.get(snapPath) ?? ctx.read(snapPath);
-  const built = buildManifest({ registry: ctx.registry, snapshot: c.snapshot, snapshotRef: fileRef(snapPath, snapText), parts: c.parts, now: ctx.now, previousSnapshot: c.previousSnapshot, rollback: c.rollback, pinned: ctx.pins.pins.map((x) => x.snapshot), calendar: ctx.calendar });
+  const built = buildManifest({ registry: ctx.registry, snapshot: c.snapshot, snapshotRef: fileRef(snapPath, snapText), parts: c.parts, now: ctx.now, previousSnapshot: c.previousSnapshot, rollback: c.rollback, locks: c.lockList ?? null, pinned: ctx.pins.pins.map((x) => x.snapshot), calendar: ctx.calendar });
   c.staged.set('manifest.json', built.text);
 
   // The window, the prune list and the budgets, on the state as it will be.
@@ -458,7 +468,7 @@ function publishCandidate(ctx, c) {
     void gateFlagBefore;
     const failed = newRecord(ctx, 'gate-failed', null, c.outcomes, c.absences ?? []);
     // Holds opened by this candidate were not published: the queue stays as it was.
-    ctx.queue = { ...readQueue(p), frozen: queueLocks([...ctx.locks.values()]) };
+    ctx.queue = { ...readQueue(p), frozen: queueLocks(ctx.locks) };
     alerts = currentAlerts(ctx, { snapshot: ctx.published.snapshot, runAlerts: [], measured: null, records: [failed, ...records.slice(1)] });
     return { outcome: 'gate-failed', problems, ...persist(ctx, failed, alerts) };
   }
@@ -529,7 +539,7 @@ function newCandidate(ctx) {
   const newest = Object.keys(ctx.index.snapshots).sort().pop() ?? null;
   const id = snapshotId(ctx.now);
   if (newest !== null && id <= newest) throw new Error(`run refused: ${id} is not later than the newest snapshot ${newest}`);
-  return { id, newest, staged: new Map(), stagedHolds: new Map(), parts: {}, snapshotRevisions: [], series: {}, holds: [], frozen: [], runAlerts: [], outcomes: {} };
+  return { id, newest, staged: new Map(), stagedHolds: new Map(), parts: {}, snapshotRevisions: [], series: {}, holds: [], frozen: [], keptLocks: [], runAlerts: [], outcomes: {} };
 }
 
 function finishSnapshot(ctx, c) {
@@ -569,6 +579,7 @@ async function collect(ctx) {
     }
     anyDue = true;
     Object.assign(results, await collectGroup(ctx, g, start));
+    for (const m of g.members) results[m.id].start = start;
     // Source state for alerts and failure counts (17.4).
     const src = (ctx.collector.sources[g.source] ??= { consecutive_failures: 0, last_failure: null, blocked: null, invalid: false });
     const outcomes = g.members.map((s) => results[s.id]);
@@ -612,30 +623,37 @@ async function collect(ctx) {
     let r = results[s.id];
     const prev = stateOf(ctx, s.id);
     const oldHold = oldHolds.get(s.id);
-    const lock = ctx.locks.get(s.id);
-    const keepLock = () => c.frozen.push(snapshotLock(lock));
+    const locks = ctx.locks.filter((l) => l.series === s.id);
+    const keep = (list) => {
+      for (const l of list) {
+        c.frozen.push(snapshotLock(l));
+        c.keptLocks.push(l);
+      }
+    };
     const carry = (status, attemptOutcome, extra = {}) => ({ ...prev, status: prev.status === 'not-yet-published' ? 'not-yet-published' : status, attempt: { at: ctx.now, outcome: attemptOutcome, error: r.error ? errorText(r.error) : null }, ...extra });
     c.parts[s.id] = carriedParts(ctx, s.id);
     if (r.outcome === 'not-due' || r.outcome === 'failed' || r.outcome === 'invalid') {
       c.series[s.id] = carry(oldHold ? 'held' : 'carried-forward', r.outcome === 'not-due' ? 'not-due' : r.outcome);
       if (oldHold) c.holds.push(oldHold);
-      if (lock) keepLock();
+      keep(locks);
       continue;
     }
-    if (lock) {
-      // A locked series publishes nothing (11.5): a rolled-back lock until a person clears it,
-      // a rejected one while its candidate carries any locked change.
-      const stays = lock.origin === 'rolled-back' || carriesLock(s, lock.observations, r.candidate, lock.locked_changes);
-      if (stays) {
+    if (locks.length) {
+      // A locked series publishes nothing (11.5): each lock stands by its own rule, a rolled-back
+      // one until a person clears it, a rejected one while the candidate carries any of its locked
+      // changes or, on a windowed run, while one of them lies before the window (v0.6).
+      const beforeWindow = (l) => r.start !== null && r.start !== undefined && l.locked_changes.some((x) => x.period < r.start);
+      const standing = locks.filter((l) => l.origin === 'rolled-back' || beforeWindow(l) || carriesLock(s, l.observations, r.candidate, l.locked_changes));
+      if (standing.length) {
         const same = r.outcome === 'unchanged';
         c.series[s.id] = oldHold ? carry('held', 'ok') : same ? carry('unchanged', 'ok', { checked_at: ctx.now }) : carry('carried-forward', 'ok');
         if (oldHold) c.holds.push(oldHold);
-        keepLock();
+        keep(standing);
         outcomes[s.id] = same ? 'unchanged' : 'revised-unexpected';
         continue;
       }
-      // The candidate carries none of the rejected changes: the lock lifts and the candidate is
-      // classified afresh below.
+      // No lock stands: the candidate carries none of the rejected observations and is classified
+      // afresh below.
     }
     if (r.outcome === 'unchanged') {
       // The source exactly matches the published data: the only automatic way out of a hold
@@ -680,8 +698,8 @@ async function collect(ctx) {
     c.runAlerts.push({ key: `source-overdue:${id}`, severity: 'warning', title: `Source late: ${id}`, body: `The source answered and its data was valid, but it has no record yet for period ${first.period} of series ${id}, whose deadline has passed. This is the source being late, not a failure of collection.` });
   }
   // The queue keeps the details of the locks still in force; lifted ones leave it (11.5).
-  ctx.queue = { ...ctx.queue, frozen: queueLocks(c.frozen.map((f) => ctx.locks.get(f.series))) };
-  const frozenKey = (list) => JSON.stringify(list.map((f) => [f.series, f.candidate_sha256]).sort());
+  ctx.queue = { ...ctx.queue, frozen: queueLocks(c.keptLocks) };
+  const frozenKey = (list) => JSON.stringify(list.map((f) => [f.series, f.origin ?? 'rejected', f.candidate_sha256]).sort());
   if (frozenKey(c.frozen) !== frozenKey(oldFrozen)) needSnapshot = true;
   const holdKey = (list) => JSON.stringify(list.map((h) => [h.series, h.candidate.sha256]).sort());
   if (holdKey(c.holds) !== holdKey([...oldHolds.values()])) needSnapshot = true;
@@ -718,10 +736,12 @@ function absencesOf(ctx, c, results) {
     if (st.status !== 'not-yet-published') {
       const inForce = new Set();
       const held = c.holds.find((h) => h.series === s.id);
-      const frozen = c.frozen.find((f) => f.series === s.id);
-      const sha = held?.candidate.sha256 ?? frozen?.candidate_sha256 ?? null;
-      const text = sha ? holdText(s.id, sha) : null;
-      if (text !== null) for (const o of JSON.parse(text)) inForce.add(o.period);
+      const shas = [held?.candidate.sha256, ...c.frozen.filter((f) => f.series === s.id).map((f) => f.candidate_sha256)].filter(Boolean);
+      for (const sha of shas) {
+        const text = holdText(s.id, sha);
+        if (text !== null) for (const o of JSON.parse(text)) inForce.add(o.period);
+      }
+      for (const o of r.candidate ?? []) inForce.add(o.period);
       const passedKind = () => (r.outcome === 'failed' ? ['collection-failure', 'fetch-failed'] : r.outcome === 'invalid' ? ['collection-failure', 'response-invalid'] : ['source-overdue', 'after-deadline']);
       const gaps = new Set((s.known_gaps ?? []).map((g) => g.period));
       if (s.frequency === 'business-day') {
@@ -753,7 +773,7 @@ function failed(ctx, error) {
   store.clearStaging(ctx.p);
   // Reload the state as it is on disk: nothing of the failed run is kept but its record.
   ctx.collector = { ...emptyCollector(), ...store.readState(ctx.p, 'collector.json', emptyCollector()) };
-  ctx.queue = { ...readQueue(ctx.p), frozen: queueLocks([...ctx.locks.values()]) };
+  ctx.queue = { ...readQueue(ctx.p), frozen: queueLocks(ctx.locks) };
   const record = newRecord(ctx, 'failed', null, {});
   const records = [record, ...store.allRunRecords(ctx.p).sort((a, b) => (a.started_at > b.started_at ? -1 : 1))];
   return { outcome: 'failed', error: error.message, ...persist(ctx, record, currentAlerts(ctx, { snapshot: ctx.published.snapshot, runAlerts: [], measured: null, records })) };
@@ -828,16 +848,16 @@ function withdrawHold(ctx, c, s, hold) {
  */
 function reviewRefusal(ctx, o) {
   if (o.decision === 'clear') {
-    // Clearing a lock (v0.5): the series must be locked, with this candidate.
-    const lock = ctx.locks.get(o.series);
-    if (!lock) return { rule: 'not-locked', error: `series ${o.series} is not locked` };
-    if (lock.candidate_sha256 !== o.candidate_sha256) return { rule: 'stale-candidate', error: 'the locked candidate is not this one; review the current lock' };
+    // Clearing a lock (v0.5): the series must be locked, with this candidate (v0.6: several locks).
+    const mine = ctx.locks.filter((l) => l.series === o.series);
+    if (!mine.length) return { rule: 'not-locked', error: `series ${o.series} is not locked` };
+    if (!mine.some((l) => l.candidate_sha256 === o.candidate_sha256)) return { rule: 'stale-candidate', error: 'no lock of this series has this candidate; review the current locks' };
   } else {
     const hold = (ctx.published.snapshot?.holds ?? []).find((h) => h.series === o.series);
     if (!hold) return { rule: 'not-held', error: `series ${o.series} is not held` };
     if (hold.candidate.sha256 !== o.candidate_sha256) return { rule: 'stale-candidate', error: 'the held candidate has changed since; review the current one' };
     if (!['approve', 'reject'].includes(o.decision)) return { rule: 'bad-decision', error: 'the decision must be approve, reject or clear' };
-    if (ctx.locks.has(o.series)) return { rule: 'locked', error: `series ${o.series} is locked; clear the lock before deciding its hold` };
+    if (ctx.locks.some((l) => l.series === o.series)) return { rule: 'locked', error: `series ${o.series} is locked; clear the lock before deciding its hold` };
   }
   const text = (v) => typeof v === 'string' && v.trim() !== '';
   if (!text(o.reviewer) || !text(o.reason)) return { rule: 'missing-text', error: 'a review needs a reviewer and a reason' };
@@ -863,7 +883,7 @@ export function reviewHold(o) {
     }
     const auth = { reviewer_permission: o.reviewer_permission, permission_checked_at: o.permission_checked_at };
     const s = ctx.registry.series.find((x) => x.id === o.series);
-    const lock = ctx.locks.get(o.series);
+    const lock = ctx.locks.find((l) => l.series === o.series && l.candidate_sha256 === o.candidate_sha256);
     // A cleared lock is reviewed like a hold of its locked candidate.
     const hold = o.decision === 'clear'
       ? { series: s.id, candidate: { sha256: lock.candidate_sha256 }, reason: lock.reason, opened_at: lock.frozen_at }
@@ -878,7 +898,7 @@ export function reviewHold(o) {
     }
     c.holds = o.decision === 'clear' ? [...ctx.published.snapshot.holds] : ctx.published.snapshot.holds.filter((h) => h.series !== o.series);
     // The locks in force carry on; a clear removes its own (11.5).
-    const kept = [...ctx.locks.values()].filter((l) => !(o.decision === 'clear' && l.series === o.series));
+    const kept = ctx.locks.filter((l) => !(o.decision === 'clear' && l.series === o.series && l.candidate_sha256 === o.candidate_sha256));
     c.frozen = kept.map(snapshotLock);
     const prev = stateOf(ctx, s.id);
     const rec = decide(ctx, c, s, hold, o.decision, o.reviewer, o.reason, auth);
@@ -900,7 +920,7 @@ export function reviewHold(o) {
       // Rejected: the series is locked while the source carries the rejected change (11.5).
       c.series[s.id] = { ...prev, status: 'carried-forward', attempt: { at: ctx.now, outcome: 'not-due', error: null } };
       c.outcomes[s.id] = 'revised-unexpected';
-      const changes = lockedChanges(s, ctx.published.observations[s.id], rec.candidate, 'rejected');
+      const changes = lockedChanges(s, ctx.published.observations[s.id], rec.candidate);
       const lockNew = { series: s.id, candidate_sha256: hold.candidate.sha256, origin: 'rejected', frozen_at: ctx.now, run: ctx.run.id, reviewer: o.reviewer, reason: o.reason, affected_periods: rec.affected, locked_changes: changes, observations: rec.candidate };
       locks = [...kept, lockNew];
       c.frozen.push(snapshotLock(lockNew));
@@ -951,7 +971,7 @@ export function rollback(o) {
         // until an authorized review clears the lock. The withdrawn observations are its candidate.
         const withdrawn = holdCandidate(s.id, before, ctx.now);
         stagedHolds.set(withdrawn.local, withdrawn.text);
-        const changes = lockedChanges(s, after, before, 'rolled-back');
+        const changes = lockedChanges(s, after, before);
         rolledBack.push({ series: s.id, candidate_sha256: withdrawn.sha256, origin: 'rolled-back', frozen_at: ctx.now, run: ctx.run.id, reviewer: null, reason: o.reason, affected_periods: [...new Set(changes.map((x) => x.period))].sort(), locked_changes: changes, observations: before });
       }
       // The CSV segments of the newest archived manifest that names the target, exactly (12.9).
@@ -959,16 +979,29 @@ export function rollback(o) {
     }
     // The holds and locks of the target are in force again, as they were, and the rollback adds
     // its own locks, which replace a target lock of the same series.
-    const lockedIds = new Set(rolledBack.map((l) => l.series));
-    const targetLocks = (target.frozen ?? []).filter((f) => !lockedIds.has(f.series)).map((f) => {
-      const known = ctx.queue.frozen.find((e) => e.series === f.series && e.candidate_sha256 === f.candidate_sha256);
+    const targetLocks = (target.frozen ?? []).map((f) => {
+      const known = ctx.queue.frozen.find((e) => lockKey(e) === lockKey({ ...f, origin: f.origin ?? 'rejected' }));
       const observations = candidateObservations(ctx.p, f.series, f.candidate_sha256);
       if (!observations) throw new Error(`the locked candidate of ${f.series} is missing from the archive`);
       const s = ctx.registry.series.find((x) => x.id === f.series);
-      const changes = known?.locked_changes ?? lockedChanges(s, store.observationsOf(target, f.series, ctx.read), observations, f.origin ?? 'rejected');
+      const changes = known?.locked_changes ?? lockedChanges(s, store.observationsOf(target, f.series, ctx.read), observations);
       return known ? { ...known, observations } : { series: f.series, candidate_sha256: f.candidate_sha256, origin: f.origin ?? 'rejected', frozen_at: f.frozen_at, run: 'rebuilt-from-published-state', reviewer: null, reason: f.reason, affected_periods: [...new Set(changes.map((x) => x.period))].sort(), locked_changes: changes, observations };
     });
-    const locks = [...targetLocks, ...rolledBack];
+    // Every lock in force before the rollback is kept (v0.6): rejections, also those decided after
+    // the target, and earlier rollbacks' locks; then the rollback's own.
+    const locks = [];
+    const seen = new Set();
+    for (const l of [...targetLocks, ...ctx.locks, ...rolledBack]) {
+      if (seen.has(lockKey(l))) continue;
+      seen.add(lockKey(l));
+      locks.push(l);
+    }
+    const targetKeys = new Set(targetLocks.map(lockKey));
+    const order = new Map(ctx.registry.series.map((x, i) => [x.id, i]));
+    const recordLocks = locks.filter((l) => !targetKeys.has(lockKey(l))).sort((a, b) => order.get(a.series) - order.get(b.series) || (a.origin < b.origin ? -1 : a.origin > b.origin ? 1 : 0));
+    const record = { schema: 'rmf.econ.rollback/1', from: ctx.published.manifest.snapshot.id, to: o.to, at: ctx.now, run: ctx.run.id, reason: o.reason, locks: recordLocks.map((l) => ({ series: l.series, origin: l.origin, candidate_sha256: l.candidate_sha256, locked_changes: l.locked_changes })) };
+    stagedHolds.set(rollbackRecordPath(ctx.now), canonicalJson(record));
+    const lockedIds = new Set(recordLocks.map((l) => l.series));
     ctx.queue = {
       ...ctx.queue,
       open: target.holds.map((h) => {

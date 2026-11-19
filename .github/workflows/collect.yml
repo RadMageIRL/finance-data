@@ -1,16 +1,22 @@
-# The collector, prepared for stage B and limited to fixtures now. There is no schedule: a
-# schedule is added only when scheduled collection is authorized (stage C). A live run is refused
-# by the pipeline's activation guard whatever this workflow asks, and no live transport exists.
+# The collector (DATA_CONVENTIONS 20). Manual only: there is no schedule. Fixture mode runs the
+# deterministic scenario. Live mode is one nonpublishing collection (Stage B): it runs only when the
+# repository variable LIVE_COLLECTION_AUTHORIZED is "true" and the person starting it types LIVE; it
+# writes only to the private state repository, through a token minted for that repository alone.
+# Nothing is published: no Pages, no release, no Labs route.
 name: collect
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Fixture only at this stage
+        description: fixture, or live (one nonpublishing collection)
         type: choice
-        options: [fixture]
+        options: [fixture, live]
         default: fixture
+      confirm:
+        description: For live mode, type LIVE
+        type: string
+        default: ''
 
 permissions: {}
 
@@ -21,7 +27,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -31,19 +37,95 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - name: A live run is refused
+
+      - name: A live run without the authorization is refused
+        if: inputs.mode == 'fixture'
         run: |
           if node pipeline/bin/collect.mjs --mode live --root "$RUNNER_TEMP/live-root"; then
             echo "a live run was not refused"
             exit 1
           fi
       - name: Collect from fixtures
+        if: inputs.mode == 'fixture'
+        run: node pipeline/bin/collect.mjs --mode fixture --root "$RUNNER_TEMP/fixture-root"
+
+      - name: Refuse a live run that is not authorized and confirmed
+        if: inputs.mode == 'live'
         env:
-          MODE: ${{ inputs.mode }}
-        run: node pipeline/bin/collect.mjs --mode "$MODE" --root "$RUNNER_TEMP/fixture-root"
-      - name: Keep the fixture root for inspection (convenience only; never the state store)
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          AUTHORIZED: ${{ vars.LIVE_COLLECTION_AUTHORIZED }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$AUTHORIZED" != "true" ] || [ "$CONFIRM" != "LIVE" ]; then
+            echo "live collection is not authorized and confirmed"
+            exit 1
+          fi
+      - name: Mint a token for the state store only
+        if: inputs.mode == 'live'
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          name: fixture-root
-          path: ${{ runner.temp }}/fixture-root
-          retention-days: 7
+          app-id: ${{ vars.STATE_APP_ID }}
+          private-key: ${{ secrets.STATE_APP_PRIVATE_KEY }}
+          owner: RadMageIRL
+          repositories: finance-data-state
+          permission-contents: write
+      - name: Check out the state store (a store with no commit yet is a fresh store)
+        if: inputs.mode == 'live'
+        env:
+          TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          # actions/checkout cannot fetch a repository that has no commit yet, so the state store is
+          # read with git directly: the head of main at depth 1, or nothing at all when the store has
+          # no ref yet (DATA_CONVENTIONS 20.3: no state/ is a fresh store). Refs without main, or a
+          # failure to read the store, stop the run before any request is made.
+          basic="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          echo "::add-mask::${basic}"
+          git init -q -b main state-store
+          git -C state-store remote add origin https://github.com/RadMageIRL/finance-data-state.git
+          git -C state-store config http.https://github.com/.extraheader "AUTHORIZATION: basic ${basic}"
+          refs="$(git -C state-store ls-remote origin)"
+          if [ -z "$refs" ]; then
+            echo "the state store has no commit yet: a fresh store"
+          elif printf '%s\n' "$refs" | awk '$2 == "refs/heads/main" { found = 1 } END { exit !found }'; then
+            git -C state-store fetch -q --depth 1 origin main
+            git -C state-store checkout -q -B main FETCH_HEAD
+            echo "state store at $(git -C state-store rev-parse HEAD)"
+          else
+            echo "the state store has refs but no main branch"
+            exit 1
+          fi
+      - name: Commit identity of the app
+        if: inputs.mode == 'live'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          id="$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)"
+          git -C state-store config user.name "${SLUG}[bot]"
+          git -C state-store config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+      - name: Collect (live, nonpublishing), then write the state store without force
+        if: inputs.mode == 'live'
+        env:
+          LIVE_COLLECTION_AUTHORIZED: ${{ vars.LIVE_COLLECTION_AUTHORIZED }}
+          RUN: live-${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          node pipeline/bin/collect.mjs --mode live --root "$RUNNER_TEMP/root"
+          --responses "$RUNNER_TEMP/responses" --state state-store --run "$RUN" --push
+      - name: Independent comparison with the saved histories, kept in the state store
+        if: inputs.mode == 'live'
+        env:
+          RUN: live-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          # The checker writes outside the collection folder it reads; its exit code is kept and
+          # returned after the result is stored (0 everything compared, 1 something refused).
+          set +e
+          python3 -I tests/datacheck/check_p22.py --compare-saved "state-store/unpublished/$RUN" --compare-out "$RUNNER_TEMP/comparison.json" > "$RUNNER_TEMP/comparison.txt" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/comparison.txt"
+          cp "$RUNNER_TEMP/comparison.txt" "state-store/unpublished/$RUN/comparison.txt"
+          if [ -f "$RUNNER_TEMP/comparison.json" ]; then cp "$RUNNER_TEMP/comparison.json" "state-store/unpublished/$RUN/comparison.json"; fi
+          git -C state-store add -A
+          git -C state-store commit -q -m "Stage B collection $RUN: independent comparison (checker exit $code)"
+          git -C state-store push -q origin HEAD:main
+          exit "$code"

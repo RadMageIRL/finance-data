@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "rmf.econ.review-queue/3",
+  "$id": "rmf.econ.review-queue/4",
   "title": "Held candidates waiting for a person, and every decision taken (DATA_CONVENTIONS section 17.5)",
   "type": "object",
   "additionalProperties": false,
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "schema": {
-      "const": "rmf.econ.review-queue/3"
+      "const": "rmf.econ.review-queue/4"
     },
     "open": {
       "type": "array",

@@ -385,6 +385,9 @@ describe('review, rollback and restore', () => {
     expect(again.outcome).toBe('no-change');
     // The test source also lacks its newest days past their deadlines: late at the source (11.6).
     expect((again.record as Loose).alerts.filter((k: string) => !k.startsWith('source-overdue:'))).toEqual(['frozen:debt-total']);
+    // The locked series is checked again without a second hold or any new issue action for its alert.
+    expect((again.plan as Loose[]).filter((x) => x.key === 'frozen:debt-total')).toEqual([]);
+    expect(json(root, 'archive/state/review-queue.json').open).toEqual([]);
     // A new day while the rejected value persists: the other series publish it, and the locked
     // series stays locked, publishing nothing, not even the new day (v0.5, 11.5).
     const next = [...debt, debtDay(debt[debt.length - 1], '2026-11-13', 1000)];
@@ -394,6 +397,8 @@ describe('review, rollback and restore', () => {
     expect(m.series['debt-total']).toMatchObject({ status: 'frozen', last_period: '2026-11-12', last_value: inputs.debt[inputs.debt.length - 1].tot_pub_debt_out_amt });
     expect((r.record as Loose).alerts.filter((k: string) => !k.startsWith('source-overdue:'))).toEqual(['frozen:debt-total']);
     expect(json(root, 'archive/state/review-queue.json').frozen.map((f: Loose) => [f.series, f.origin])).toEqual([['debt-total', 'rejected']]);
+    expect((r.plan as Loose[]).filter((x) => x.key === 'frozen:debt-total')).toEqual([]);
+    expect(json(root, 'archive/state/review-queue.json').open).toEqual([]);
   });
 
   it('thaws a frozen series when the source returns exactly to the published data', async () => {

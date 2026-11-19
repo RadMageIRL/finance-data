@@ -247,6 +247,7 @@ export function validateSeries(series, observations, runEtDate, calendar = null)
   const format = series.frequency === 'month' ? /^\d{4}-\d{2}$/ : /^\d{4}-\d{2}-\d{2}$/;
   const places = (v) => (v.includes('.') ? v.split('.')[1].length : 0);
   const eraOf = (p) => series.extract.find((e) => e.from <= p && (e.to === null || p <= e.to));
+  const accepted = new Set((series.accepted_zeros ?? []).map((z) => `${z.period}|${z.field}`));
   let prev = null;
   for (const o of observations) {
     const p = o[key];
@@ -268,6 +269,9 @@ export function validateSeries(series, observations, runEtDate, calendar = null)
       if (places(v) !== series.decimals) problems.push(`${p}: ${field} ${v} does not have ${series.decimals} decimals`);
       // A zero where the source documents zero as its display of a missing amount is stored
       // neither as zero nor as missing (2.3, refuse_zero).
+      // A zero named by an accepted_zeros entry (v0.6) is the source's confirmed value: stored as
+      // zero, exempt from the range; no other zero and no other value is exempt.
+      else if (eraOf(p)?.refuse_zero === true && ZERO.test(v) && accepted.has(`${p}|${field}`)) continue;
       else if (eraOf(p)?.refuse_zero === true && ZERO.test(v)) problems.push(`${p}: ${field} ${v} is zero, which the source documents as its display of a missing amount; it is stored neither as zero nor as missing`);
       else if (compareDecimal(v, series.range.min) < 0 || compareDecimal(v, series.range.max) > 0) problems.push(`${p}: ${field} ${v} outside ${series.range.min} to ${series.range.max}`);
     }
