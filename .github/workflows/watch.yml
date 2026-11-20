@@ -1,0 +1,47 @@
+# The independent run-gap watcher (DATA_CONVENTIONS 21.9, Stage C, decision P43). The collector's
+# own self-check runs inside the collect run it judges, so it cannot report that no collect run
+# started at all; this workflow can. Two triggers that do not depend on each other: GitHub's own
+# cron (best effort) and a dispatch by the Cloudflare timer's second cron line 47 2-22/4 * * *
+# (titled "watch timer <slot>"). It reads the collect workflow's state and runs and the
+# repository's pushed_at, evaluates schedule health (14.3) for the run keys only, and reconciles
+# only the alert issues with those keys. It reads no state store and holds no secret. The job
+# fails when a run gap, a disabled collect workflow or a failure streak is present, so GitHub's
+# failed-run notification is a second channel.
+name: watch
+run-name: ${{ (github.event_name == 'workflow_dispatch' && inputs.slot != '') && format('watch timer {0}', inputs.slot) || 'watch' }}
+
+on:
+  schedule:
+    - cron: '47 1-19/6 * * *'
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: The cron slot the timer fired for (UTC), or empty for a manual run
+        type: string
+        default: ''
+
+permissions: {}
+
+concurrency:
+  group: watch
+  cancel-in-progress: true
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Schedule health of the collect workflow (run keys), then reconcile their issues
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node pipeline/bin/watch.mjs
