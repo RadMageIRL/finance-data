@@ -6,7 +6,7 @@ The economic data pipeline of RadMage Finance (https://radmagelabs.com/finance/)
 
 Stage C: scheduled **private** collection (data conventions v0.7, section 21). **Private.** Nothing is published:
 
-- the `collect` workflow runs every four hours at :17 UTC; a scheduled run collects only while the repository variables `LIVE_COLLECTION_AUTHORIZED` and `COLLECTION_SCHEDULE_ENABLED` are both `true` (delete either to pause); a manual live run also needs the typed confirmation LIVE; requests identify themselves as `RadMage Finance (+https://radmagelabs.com/finance/)`;
+- the `collect` workflow runs every four hours at :17 UTC, dispatched in mode `timer` by a Cloudflare Worker cron (`17 */4 * * *`) that names the slot it fired for (GitHub's own cron is no longer a trigger); a scheduled run collects only while the repository variables `LIVE_COLLECTION_AUTHORIZED` and `COLLECTION_SCHEDULE_ENABLED` are both `true` (delete either to pause); a manual live run also needs the typed confirmation LIVE; requests identify themselves as `RadMage Finance (+https://radmagelabs.com/finance/)`;
 - every run is validated by the independent checker before the private state repository `RadMageIRL/finance-data-state` is written, through a GitHub App limited to that repository (contents write, metadata read) whose key is kept in GitHub's secret storage; the push is never forced, and one concurrency group keeps writers apart;
 - unexpected changes are held for a person, who decides with the `operate` workflow (review, rollback, restore); alerts are kept as one issue per key, edited and closed, never duplicated;
 - nothing is published: GitHub Pages is not enabled, the publication workflow is disabled, and no public dataset exists.
@@ -26,7 +26,8 @@ Publication needs its own authorization.
 | `tests/unit/pipeline/` | Unit and end-to-end fixture tests (Vitest) |
 | `tests/datacheck/` | The independent checker, written from the specification text alone (Python standard library): plain, root, live root, state store and scenario modes, and the comparison with the saved histories |
 | `tools/datacheck.mjs` | Writes both scenarios twice (the bytes must match, and the appendix B tree hash must equal the committed one on every platform) and runs the checker on them |
-| `.github/workflows/` | `ci` (every push), `collect` (scheduled and manual), `operate` (manual), `rehearse` (manual, fixtures), `publish` (disabled) |
+| `timer/worker.mjs` | The Cloudflare Worker `finance-collect-timer`: its cron `17 */4 * * *` dispatches `collect` in mode `timer` with the slot; one secret, a fine-grained token for this repository with Actions read and write; no route |
+| `.github/workflows/` | `ci` (every push), `collect` (timer dispatch and manual), `operate` (manual), `rehearse` (manual, fixtures), `publish` (disabled) |
 
 ## Running the checks
 
