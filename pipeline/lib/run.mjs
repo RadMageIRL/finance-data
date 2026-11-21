@@ -9,7 +9,8 @@ import { canonicalJson, sha256Hex } from './canonical.mjs';
 import { addDays, etDate, makeCalendar, snapshotId, weekday } from './calendar.mjs';
 import { GAP_PROBLEM, changePoints, normalizeDebt, normalizeEffr, normalizeH6, undocumentedGaps, validateSeries } from './normalize.mjs';
 import { classify, diffObservations, isSame, keyOf, revisionRecords } from './classify.mjs';
-import { buildManifest, buildObjects, csvSegments, deadlines, fileRef, holdCandidate, periodDeadline, registryHash, revisionLog, snapshotNotices } from './tree.mjs';
+import { buildManifest, buildObjects, csvSegments, deadlines, fileRef, holdCandidate, periodDeadline, registryHash, revisionCsv, revisionLog, snapshotNotices } from './tree.mjs';
+import { registryCopyPath, ruleFiles } from './rules.mjs';
 import { gateProblems } from './gate.mjs';
 import { addPin, budgetAlerts, emptyPins, liveWindow, prunable, removePin } from './retention.mjs';
 import { emptyLedger, healthAlerts, planIssues, routeNoticeAlerts } from './alerts.mjs';
@@ -22,6 +23,8 @@ const bytes = (text) => Buffer.byteLength(text, 'utf8');
 const PIPELINE_DIR = fileURLToPath(new URL('..', import.meta.url));
 const NYP = (at, outcome = 'not-due', error = null) => ({ objects: [], last_period: null, observation_count: 0, status: 'not-yet-published', retrieved_at: null, checked_at: null, attempt: { at, outcome, error }, source_marker: null });
 const category = (status) => (status === 'not-yet-published' ? 'unpublished' : status === 'held' ? 'held' : 'published');
+/** The schedule-health findings the collector's self-check raises (17.8 layer 2, v0.8): the run keys. */
+export const SELF_CHECK_KEYS = new Set(['workflow-disabled', 'inactivity', 'scheduled-run-gap', 'consecutive-failures']);
 const emptyQueue = () => ({ schema: 'rmf.econ.review-queue/4', open: [], frozen: [], decisions: [], refusals: [] });
 const emptyCollector = () => ({ schema: 'rmf.econ.collector/1', sources: {}, invalid_series: [], source_gaps: {}, gate_failed: false, archive_bytes_by_month: {}, hold_meta: {}, full_fetches: {} });
 /** At most this many undocumented gaps of a series are listed (11.6); the alert gives the count. */
@@ -371,7 +374,9 @@ function currentAlerts(ctx, { snapshot, frozen = null, runAlerts, measured, reco
   if (measured) alerts.push(...budgetAlerts(measured, ctx.pins.pins.length));
   else if (ctx.pins.pins.length) alerts.push(...budgetAlerts({ publishedBytes: 0, archiveMonthBytes: 0, largestObject: 0, largestFile: 0, manifestBytes: 0 }, ctx.pins.pins.length));
   if (ctx.recovered) alerts.push({ key: 'recovered-staging', severity: 'warning', title: 'A leftover staging folder was removed', body: `${ctx.recovered} staging folder(s) of a run that did not finish were deleted before this run. The live tree was not affected.` });
-  if (ctx.o.healthFacts) alerts.push(...healthAlerts(scheduleHealth({ ...ctx.o.healthFacts, now: ctx.now, manifest: ctx.o.healthFacts.manifest ?? null })));
+  // v0.8 (17.8 layer 2, I35): the self-check gives only the run keys; the manifest findings are the
+  // watcher's (21.9), and series-stale and series-held are not delivered (stale: and hold: carry them).
+  if (ctx.o.healthFacts) alerts.push(...healthAlerts(scheduleHealth({ ...ctx.o.healthFacts, now: ctx.now, manifest: ctx.o.healthFacts.manifest ?? null }).filter((f) => SELF_CHECK_KEYS.has(f.key))));
   // Alerts the caller found (v0.7, 21.3 and 21.4: self-check-unavailable, budget:state-store).
   for (const a of ctx.o.extraAlerts ?? []) alerts.push(a);
   return alerts;
@@ -400,11 +405,31 @@ function publishCandidate(ctx, c) {
   const { p } = ctx;
   const snapPath = `snapshots/${c.snapshot.id}.json`;
   const snapText = c.staged.get(snapPath) ?? ctx.read(snapPath);
-  const built = buildManifest({ registry: ctx.registry, snapshot: c.snapshot, snapshotRef: fileRef(snapPath, snapText), parts: c.parts, now: ctx.now, previousSnapshot: c.previousSnapshot, rollback: c.rollback, locks: c.lockList ?? null, pinned: ctx.pins.pins.map((x) => x.snapshot), calendar: ctx.calendar });
+  const snapshots = { ...ctx.index.snapshots, [c.snapshot.id]: c.snapshot };
+
+  // v0.8 (10, D17): a CSV for every revision log version the manifest names. Content-addressed,
+  // so a CSV already in the archive is not staged again.
+  for (const s of ctx.registry.series) {
+    const part = c.parts[s.id];
+    part.revisionCsvs = part.revisions.map((r) => {
+      const logText = c.staged.get(r.path) ?? ctx.read(r.path);
+      if (logText === null) throw new Error(`run refused: the revision log ${r.path} is missing`);
+      const csv = revisionCsv(s, ctx.registry.sources[s.source], logText);
+      if (ctx.read(csv.path) === null) c.staged.set(csv.path, csv.text);
+      return { path: csv.path, sha256: csv.sha256 };
+    });
+  }
+  // v0.8 (22.9, D8): the rule files, for the registry versions the window's snapshots name. The
+  // window's snapshots do not depend on the manifest's series, so they are known before it.
+  const provisional = liveWindow({ manifest: { snapshot: { id: c.snapshot.id }, previous_snapshot: c.previousSnapshot, generated_at: ctx.now, series: {} }, snapshots, manifests: [], pins: ctx.pins });
+  const rules = ruleFiles({ registry: ctx.registry, holidays: ctx.o.holidays, generatedAt: ctx.now, windowRegistryHashes: Object.keys(provisional.kept).map((id) => snapshots[id].run.registry_sha256), archivedRegistry: (h) => store.readText(join(p.files, registryCopyPath(h))) });
+  for (const [path, text] of rules.files) if (ctx.read(path) === null) c.staged.set(path, text);
+  c.staged.set('NOTICE.txt', rules.notice);
+
+  const built = buildManifest({ registry: ctx.registry, snapshot: c.snapshot, snapshotRef: fileRef(snapPath, snapText), parts: c.parts, now: ctx.now, previousSnapshot: c.previousSnapshot, rollback: c.rollback, locks: c.lockList ?? null, pinned: ctx.pins.pins.map((x) => x.snapshot), calendar: ctx.calendar, rules: rules.rules });
   c.staged.set('manifest.json', built.text);
 
   // The window, the prune list and the budgets, on the state as it will be.
-  const snapshots = { ...ctx.index.snapshots, [c.snapshot.id]: c.snapshot };
   const window = liveWindow({ manifest: built.manifest, snapshots, manifests: ctx.index.manifests, pins: ctx.pins });
   const liveNow = store.listFiles(p.live);
   const pruned = prunable(liveNow, window);
@@ -416,7 +441,7 @@ function publishCandidate(ctx, c) {
   for (const [path, text] of c.staged) sizes.set(path, bytes(text));
   const month = ctx.runEt.slice(0, 7);
   let added = bytes(built.text);
-  for (const [path, text] of c.staged) if (path !== 'manifest.json' && !path.startsWith('status/') && !existsSync(join(p.files, path))) added += bytes(text);
+  for (const [path, text] of c.staged) if (path !== 'manifest.json' && path !== 'NOTICE.txt' && !path.startsWith('status/') && !existsSync(join(p.files, path))) added += bytes(text);
   for (const [path, text] of c.stagedHolds) if (!existsSync(join(p.root, 'archive', path))) added += bytes(text);
   const objectSizes = [...sizes].filter(([f]) => f.startsWith('objects/')).map(([, n]) => n);
   const measure = () => ({
@@ -468,6 +493,9 @@ function publishCandidate(ctx, c) {
     rollbackNamed: c.named ?? null,
     measured: measure(),
     limits: ctx.o.limits,
+    calendar: ctx.calendar,
+    holidays: ctx.o.holidays,
+    windowRegistryHashes: Object.keys(provisional.kept).map((id) => snapshots[id].run.registry_sha256),
   });
   if (problems.length) {
     ctx.collector.gate_failed = true;
@@ -481,7 +509,7 @@ function publishCandidate(ctx, c) {
 
   const archived = store.publish(p, { staged: c.staged, stagedHolds: c.stagedHolds, manifestText: built.text, generatedAt: ctx.now, die: ctx.o.faults?.die ?? null });
   for (const path of pruned) store.removeLive(p, path);
-  for (const path of window.keep) if (path !== 'manifest.json' && !path.startsWith('status/') && !existsSync(join(p.live, path))) store.ensureLive(p, path);
+  for (const path of window.keep) if (path !== 'manifest.json' && path !== 'NOTICE.txt' && !path.startsWith('status/') && !existsSync(join(p.live, path))) store.ensureLive(p, path);
   store.writeState(p, 'publications.json', ctx.publications);
   ctx.collector.archive_bytes_by_month[month] = (ctx.collector.archive_bytes_by_month[month] ?? 0) + archived;
   return { outcome: 'published', problems: [], manifest: built.manifest, snapshot: c.snapshot, ...persist(ctx, record, alerts) };
@@ -1041,12 +1069,14 @@ export function restore(o) {
   const snapshotHash = new Map(index.manifests.map((m) => [m.snapshot.path, m.snapshot.sha256]));
   const files = [];
   for (const path of [...window.keep].sort()) {
-    if (path === 'manifest.json' || path === 'status/runs.json') continue;
+    if (path === 'manifest.json' || path === 'status/runs.json' || path === 'NOTICE.txt') continue;
     const text = store.readText(join(p.files, path));
     if (text === null) return { outcome: 'refused', error: `${path} is not in the archive` };
     const hash = sha256Hex(text);
     const expected = path.startsWith('snapshots/') ? snapshotHash.get(path) : null;
-    const addressed = /\/([0-9a-f]{16})\.(json|csv)$/.exec(path);
+    // Content addresses: `<16 hex>.json|csv`, and from v0.8 the rule files `econ-` and
+    // `holidays-<16 hex>.json` and `notices/<16 hex>.txt` (22.9).
+    const addressed = /(?:\/|\/econ-|\/holidays-)([0-9a-f]{16})\.(json|csv|txt)$/.exec(path);
     if ((expected && expected !== hash) || (!path.startsWith('snapshots/') && (!addressed || addressed[1] !== hash.slice(0, 16)))) return { outcome: 'refused', error: `${path} does not match its hash` };
     files.push([path, text]);
   }
@@ -1056,6 +1086,12 @@ export function restore(o) {
   store.writeAtomic(join(p.records, `${record.id}.json`), canonicalJson(record));
   for (const f of store.listFiles(p.live)) store.removeLive(p, f);
   for (const [path, text] of files) store.writeAtomic(join(p.live, path), text);
+  // v0.8 (22.9): NOTICE.txt is live only; it is a byte copy of the notice file the manifest names.
+  if (manifest.rules) {
+    const notice = files.find(([path]) => path === manifest.rules.notice.path);
+    if (!notice) return { outcome: 'refused', error: `${manifest.rules.notice.path} is not in the window` };
+    store.writeAtomic(join(p.live, 'NOTICE.txt'), notice[1]);
+  }
   const publications = store.readText(join(p.state, 'publications.json'));
   if (publications !== null) store.writeAtomic(join(p.live, 'status/publications.json'), publications);
   store.writeAtomic(join(p.live, 'status/runs.json'), canonicalJson(store.runsFile(store.allRunRecords(p))));

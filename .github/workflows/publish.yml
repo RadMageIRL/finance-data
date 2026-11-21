@@ -1,37 +1,251 @@
-# Publication of the live window to GitHub Pages, prepared for stage D and disabled. The job runs
-# only when the repository variable PUBLICATION_ENABLED is "true", which is not set, and its first
-# step refuses to continue until publication is authorized. Pages is not enabled on this repository.
+# Publication of the accepted dataset (DATA_CONVENTIONS v0.8 section 22, Stage D), PREPARED AND NOT
+# ENABLED. Every mode needs the repository variable PUBLICATION_ENABLED == "true", which is not set;
+# timer mode also needs PUBLICATION_SCHEDULE_ENABLED == "true" and no open publication-verify-failed
+# issue. Nothing here deploys a Pages site: the data ships inside the Finance site build, which the
+# `dispatch` job starts (22.1, 22.8). Jobs and permissions follow 22.6 and 22.7: the state token
+# reads only; only `release` holds contents write, fenced by rulesets and release immutability;
+# `dispatch` uses the environment secret PAGES_DISPATCH_TOKEN (the Finance repository's Actions only).
 name: publish
+run-name: ${{ format('publish {0} {1}', inputs.mode, inputs.snapshot || 'accepted') }}
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: manual, timer or redeploy
+        type: choice
+        options: [manual, timer, redeploy]
+      snapshot:
+        description: manual - the accepted snapshot id
+        type: string
+        default: ''
+      manifest_sha256:
+        description: manual - the accepted manifest SHA-256
+        type: string
+        default: ''
+      confirm:
+        description: manual - type PUBLISH
+        type: string
+        default: ''
+      target:
+        description: redeploy - the verified pair, as JSON { dataset, site_commit }
+        type: string
+        default: ''
+      automatic:
+        description: set by the automatic redeploy after a failed V3 (D13)
+        type: string
+        default: 'false'
 
 permissions: {}
 
 concurrency:
-  group: collector
+  group: publish
   cancel-in-progress: false
 
+env:
+  SITE_REPOSITORY: RadMageIRL/finance
+
 jobs:
-  publish:
+  assemble:
     if: vars.PUBLICATION_ENABLED == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    environment: publication
+    timeout-minutes: 30
+    # Never beside a store writer (21.3): the job joins the collector group.
+    concurrency:
+      group: collector
+      cancel-in-progress: false
     permissions:
       contents: read
-      pages: write
-      id-token: write
+      actions: read
+    outputs:
+      outcome: ${{ steps.assemble.outputs.outcome }}
     steps:
-      - name: Publication is not authorized
-        run: |
-          echo "Publication of economic datasets is not authorized (stage D)."
-          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          path: live
-      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+          node-version: 24
+      - name: Gates (22.6)
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          SCHEDULE: ${{ vars.PUBLICATION_SCHEDULE_ENABLED }}
+          AUTOMATIC: ${{ inputs.automatic }}
+          ACTOR: ${{ github.triggering_actor }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$MODE" in manual|timer|redeploy) ;; *) echo "unknown mode"; exit 1 ;; esac
+          if [ "$MODE" = "manual" ] && [ "$CONFIRM" != "PUBLISH" ]; then echo "a manual publication needs the confirmation PUBLISH"; exit 1; fi
+          if [ "$MODE" = "timer" ]; then
+            if [ "$SCHEDULE" != "true" ]; then echo "timer publication is not enabled"; exit 1; fi
+            open="$(gh api "repos/${GITHUB_REPOSITORY}/issues?state=open&labels=rmf-alert&per_page=100" --jq '[.[] | select(.body | test("rmf-alert-key: publication-verify-failed"))] | length')"
+            if [ "$open" != "0" ]; then echo "timer publication is paused: publication-verify-failed is open"; exit 1; fi
+          fi
+          if [ "$MODE" != "timer" ] && [ "$AUTOMATIC" != "true" ]; then
+            if [[ "$ACTOR" =~ (\[bot\]$|^github-actions$) ]]; then echo "an automation account cannot start a publication"; exit 1; fi
+            perm="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${ACTOR}/permission" --jq .permission)"
+            case "$perm" in admin|maintain|write) ;; *) echo "the account does not have write access"; exit 1 ;; esac
+          fi
+      - name: Mint a read-only token for the state store
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.STATE_APP_ID }}
+          private-key: ${{ secrets.STATE_APP_PRIVATE_KEY }}
+          owner: RadMageIRL
+          repositories: finance-data-state
+          permission-contents: read
+      - name: Check out the state store (commit C)
+        env:
+          TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          basic="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          echo "::add-mask::${basic}"
+          git init -q -b main state-store
+          git -C state-store remote add origin https://github.com/RadMageIRL/finance-data-state.git
+          git -C state-store config http.https://github.com/.extraheader "AUTHORIZATION: basic ${basic}"
+          git -C state-store fetch -q --depth 1 origin main
+          git -C state-store checkout -q -B main FETCH_HEAD
+          git -C state-store config --unset-all http.https://github.com/.extraheader
+          echo "state store at $(git -C state-store rev-parse HEAD)"
+      - name: The site commit and the deployed state (public reads)
+        id: site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "commit=$(gh api "repos/${SITE_REPOSITORY}/commits/main" --jq .sha)" >> "$GITHUB_OUTPUT"
+          name="$(gh api "repos/${SITE_REPOSITORY}/actions/workflows/pages.yml/runs?per_page=100" --jq '[.workflow_runs[] | select(.status == "completed" and .conclusion == "success" and (.display_title | startswith("pages ")))][0].display_title // ""')"
+          set -- $name
+          if [ -n "$name" ] && [ "${3:-none}" != "none" ]; then echo "deployed=$3:$4" >> "$GITHUB_OUTPUT"; else echo "deployed=none" >> "$GITHUB_OUTPUT"; fi
+      - name: Assemble, then V2b and V2c with the independent checker (22.5)
+        id: assemble
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.mode }}
+          SNAPSHOT: ${{ inputs.snapshot }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          TARGET: ${{ inputs.target }}
+          SITE_COMMIT: ${{ steps.site.outputs.commit }}
+          DEPLOYED: ${{ steps.site.outputs.deployed }}
+        run: |
+          printf '%s' "$TARGET" > "$RUNNER_TEMP/target.json"
+          set +e
+          node pipeline/bin/publish.mjs assemble --store state-store --out "$RUNNER_TEMP/pub" --mode "$MODE" --snapshot "$SNAPSHOT" --manifest-sha256 "$MANIFEST_SHA256" --target "$RUNNER_TEMP/target.json" --site-commit "$SITE_COMMIT" --deployed "$DEPLOYED"
+          code=$?
+          set -e
+          echo "outcome=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).outcome)" "$RUNNER_TEMP/pub/outcome.json")" >> "$GITHUB_OUTPUT"
+          exit "$code"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publication
+          path: ${{ runner.temp }}/pub
+          retention-days: 7
+
+  release:
+    needs: assemble
+    if: needs.assemble.outputs.outcome == 'assembled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The dedicated publication credential (22.7, P55): contents write on this repository only.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: publication
+          path: ${{ runner.temp }}/pub
+      - name: Draft, the four assets, publish (22.4)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node pipeline/bin/publish.mjs release --out "$RUNNER_TEMP/pub"
+
+  dispatch:
+    needs: [assemble, release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: publication
+    permissions: {}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: publication
+          path: ${{ runner.temp }}/pub
+      - name: Dispatch the Finance site build in mode data (22.8)
+        env:
+          PAGES_DISPATCH_TOKEN: ${{ secrets.PAGES_DISPATCH_TOKEN }}
+        run: node pipeline/bin/publish.mjs dispatch --out "$RUNNER_TEMP/pub"
+
+  verify:
+    needs: [assemble, release, dispatch]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # actions: write only to start the automatic redeploy of this workflow (D13).
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: publication
+          path: ${{ runner.temp }}/pub
+      - name: Wait for the site run, then V3 at both addresses (22.5)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node pipeline/bin/publish.mjs verify --out "$RUNNER_TEMP/pub"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: verification
+          path: ${{ runner.temp }}/pub/verify.json
+          retention-days: 7
+
+  report:
+    needs: [assemble, release, dispatch, verify]
+    if: always() && vars.PUBLICATION_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: publication
+          path: ${{ runner.temp }}/pub
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: verification
+          path: ${{ runner.temp }}/pub
+      - name: Reconcile publish-failed and publication-verify-failed (22.6 job 5)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AUTOMATIC: ${{ inputs.automatic }}
+          JOBS_FAILED: ${{ contains(needs.*.result, 'failure') }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pub"
+          node pipeline/bin/publish.mjs report --out "$RUNNER_TEMP/pub"

@@ -29,10 +29,11 @@ const addDollars = (text, n) => {
 };
 
 /**
- * Runs appendix G into `dir`. Option: `validate`, the live root check (the independent checker
- * unless a test gives another).
+ * Runs appendix G into `dir`. Options: `validate`, the live root check (the independent checker
+ * unless a test gives another); `upTo`, the last step to run (appendix J starts after step 4, I46).
+ * Returns { steps, pauses, data }: `data` is the fixture data as the last step left it.
  */
-export async function runStateScenario(dir, { validate = validateRoot } = {}) {
+export async function runStateScenario(dir, { validate = validateRoot, upTo = 11 } = {}) {
   if (existsSync(dir) && readdirSync(dir).length) throw new Error(`${dir} is not empty`);
   const store = join(dir, 'store');
   const work = join(dir, 'work');
@@ -86,6 +87,7 @@ export async function runStateScenario(dir, { validate = validateRoot } = {}) {
   data.effr.push(effrRawRecord(effrDay('2026-11-13')));
   data.debt.push(debtDay(lastDebt(), '2026-11-13', 1_000_000_000));
   const fourth = await scheduled(4, '2026-11-17T00:17:00Z');
+  if (upTo <= 4) return finish();
   // 5. The first Sunday run: the weekly full fetch; the 2019-12-31 total one dollar higher.
   data.debt = data.debt.map((r) => (r.record_date === '2019-12-31' ? { ...r, tot_pub_debt_out_amt: addDollars(r.tot_pub_debt_out_amt, 1) } : r));
   await scheduled(5, '2026-11-22T16:17:00Z');
@@ -106,10 +108,13 @@ export async function runStateScenario(dir, { validate = validateRoot } = {}) {
   await operation(10, '2026-11-23T17:00:00Z', 'restore', { reason: 'Scenario: rebuild the live tree from the archive.' });
   // 11. Scheduled; the sources as at step 7, the debt source answering again.
   await scheduled(11, '2026-11-23T20:17:00Z');
+  return finish();
 
-  rmSync(work, { recursive: true, force: true });
-  writeFileSync(join(dir, 'steps.json'), canonicalJson(steps));
-  return { steps, pauses };
+  function finish() {
+    rmSync(work, { recursive: true, force: true });
+    writeFileSync(join(dir, 'steps.json'), canonicalJson(steps));
+    return { steps, pauses, data };
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

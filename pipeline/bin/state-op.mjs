@@ -13,13 +13,16 @@
 //   ... --op review --series <id> --candidate <sha256> --decision approve|reject|clear --reason <text>
 //   ... --op rollback --to <snapshot id> --reason <text>
 //   ... --op restore --reason <text>
+//   ... --op pin --snapshot <id> --site-release <name> --reason <text>   (v0.8, 17.6, 21.6)
+//   ... --op unpin --snapshot <id> --reason <text>
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadInputs } from './fixture-scenario.mjs';
 import { runChecker, validateRoot, writeStore } from './collect.mjs';
-import { reviewHold, rollback, restore } from '../lib/run.mjs';
+import { pinSnapshot, reviewHold, rollback, restore, unpinSnapshot } from '../lib/run.mjs';
+import { textRefusal } from '../lib/alerts.mjs';
 import { acceptedRecord, commitAndPush, importStateV2, promoteStore, storeLayout, verifyState, verifyStateV2 } from '../lib/state-store.mjs';
 import { canonicalJson } from '../lib/canonical.mjs';
 import { freshnessAt } from '../lib/freshness.mjs';
@@ -85,6 +88,12 @@ export async function operate(o) {
   const now = o.now ?? clock();
   const refusal = actorRefusal(inputs.registry, { actor: o.actor, permission: o.permission, checkedAt: o.checkedAt, now });
   if (refusal) throw new Error(`operation refused: ${refusal}`);
+  // v0.8 (21.6, 22.3, D6): a reason that can become public passes the reason check before any
+  // read or write; the refusal names the rule that failed, never the text.
+  if (['review', 'rollback', 'restore', 'pin', 'unpin'].includes(o.op)) {
+    const why = textRefusal(o.reason);
+    if (why) throw new Error(`operation refused: the reason fails the publication text check (${why}); nothing is written`);
+  }
   const validate = o.validate ?? validateRoot;
   if (o.op === 'promote') {
     if (storeLayout(o.state) !== 'v0.6') throw new Error(`promotion refused: the store is ${storeLayout(o.state)}, not the Stage B layout`);
@@ -127,8 +136,21 @@ export async function operate(o) {
     const ledger = existsSync(alertsFile) ? JSON.parse(readFileSync(alertsFile, 'utf8')).open.map(({ key, severity, title, body }) => ({ key, severity, title, body })) : [];
     return { outcome: 'promoted', run: o.run, accepted: r.accepted.dataset, added: r.record.added, commit, ledger, plan: [] };
   }
-  if (!['review', 'rollback', 'restore'].includes(o.op)) throw new Error(`operation refused: unknown operation ${o.op}`);
+  if (!['review', 'rollback', 'restore', 'pin', 'unpin'].includes(o.op)) throw new Error(`operation refused: unknown operation ${o.op}`);
   importStateV2(o.state, o.root);
+  if (o.op === 'pin' || o.op === 'unpin') {
+    // v0.8 (17.6, 21.6): a pin changes `pins.json` only. Like the promotion it runs no pipeline
+    // step and writes no run record; its collection record's outcome is `no-change` (21.4).
+    const r = o.op === 'pin'
+      ? pinSnapshot({ root: o.root, snapshot: o.snapshot, site_release: o.siteRelease, reason: o.reason, now })
+      : unpinSnapshot({ root: o.root, snapshot: o.snapshot, reason: o.reason, now });
+    if (!r.ok) throw new Error(`operation refused: ${r.error}; nothing is written`);
+    const checker = validate(o.root);
+    if (checker.fail !== 0) throw new Error(`validation failed: the independent checker found ${checker.fail} failure(s); the store is not written (${(checker.failures ?? []).join(' | ')})`);
+    const record = operationRecord({ run: o.run, operation: o.op, startedAt: now, endedAt: clock(), outcome: 'no-change', checker, live: join(o.root, 'live'), inputs, now });
+    const w = writeStore({ root: o.root, state: o.state, run: o.run, record, bodies: [], push: o.push, message: `Stage C operation ${o.run}: ${o.op} ${o.snapshot} (private)`, clock, validateStore: o.validateStore ?? null });
+    return { outcome: 'no-change', run: o.run, accepted: w.record.accepted, added: w.record.added, commit: w.commit, ledger: [], plan: [], refused: null, error: null };
+  }
   const base = { root: o.root, mode: 'operation', registry: inputs.registry, schemas: inputs.schemas, sourceTable: inputs.sourceTable, holidays: inputs.holidays, now, run: { id: o.run, attempt: 1, trigger: 'manual', collector_commit: process.env.GITHUB_SHA ?? '0'.repeat(40) } };
   let result;
   if (o.op === 'review') result = await reviewHold({ ...base, series: o.series, candidate_sha256: o.candidate, decision: o.reviewDecision, reviewer: o.actor, reviewer_permission: o.permission, permission_checked_at: o.checkedAt, reason: o.reason });
@@ -167,6 +189,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       reviewDecision: arg('--decision'),
       reason: arg('--reason'),
       to: arg('--to'),
+      snapshot: arg('--snapshot'),
+      siteRelease: arg('--site-release'),
       validateStore: (s) => runChecker(['--state', s]),
     });
     if (arg('--summary')) writeFileSync(arg('--summary'), JSON.stringify(r));

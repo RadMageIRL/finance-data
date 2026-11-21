@@ -146,7 +146,9 @@
             "promote",
             "review",
             "rollback",
-            "restore"
+            "restore",
+            "pin",
+            "unpin"
           ]
         }
       ]

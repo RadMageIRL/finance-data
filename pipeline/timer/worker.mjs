@@ -26,6 +26,10 @@ export function targetFor(slot) {
   const minute = slot.slice(14, 19);
   if (minute === '17:00') return { workflow: 'collect.yml', inputs: { mode: 'timer', slot } };
   if (minute === '47:00') return { workflow: 'watch.yml', inputs: { slot } };
+  // v0.8 (22.6, D2 (c)): timer publication on the third cron line `37 */4 * * *`, which is not in
+  // CRON_LINES and not deployed before gate 22; publish.yml refuses a timer run unless
+  // PUBLICATION_ENABLED and PUBLICATION_SCHEDULE_ENABLED are true and nothing pauses it.
+  if (minute === '37:00') return { workflow: 'publish.yml', inputs: { mode: 'timer' } };
   throw new Error(`timer ${slot}: no workflow is dispatched at this minute`);
 }
 

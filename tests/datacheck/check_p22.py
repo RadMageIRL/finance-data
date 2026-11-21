@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent checker for docs/DATA_CONVENTIONS.md v0.7 (RadMage Finance, P2.2 to P2.6, Stages B and C).
+"""Independent checker for docs/DATA_CONVENTIONS.md v0.8 (RadMage Finance, P2.2 to P2.6, Stages B to D).
 
 Written from the spec text, pipeline/schemas/, pipeline/registry/econ.json,
 pipeline/fixtures/ and the saved provider responses and pages under local/research/
@@ -33,6 +33,20 @@ endings converted" diagnosis (T117), the alert keys of 17.8 (T118), the live roo
 the state store mode (20.3, 21.1, 21.2, 21.4) and the appendix G scenario mode (check_state.py
 beside this file).
 
+v0.8 additions (appendix I): the registry changes and the I7 derivation of the v0.7 and v0.6
+registries (R2, R31, C13, T46, T9); the first v0.8 run and the transition rules of 22.9 for files
+written under v0.7 (T119, T46, the New York Fed terms line in T17, T57 and T92); manifest/4 with
+deadline, stale_at, revision_csvs and rules, its shape built from the text (S7, T35, T120); the
+revision CSVs of 10 (T37, T121, C15); the rule files, the notice file with the CC0 statement and
+NOTICE.txt (T122, T123, T33, T62, T63, T117, C15); the window with the rule files (T66 to T68);
+the D6 reason check (T124, C14); the v0.8 alert keys (T70, T125); state/deployments.json (ST6,
+ST20 in check_state.py); and, in check_publication.py beside this file, the publication mode (V2c
+checks 1 to 11 of 22.5, P0 to P11), the release mode of 22.8 (RL1 to RL5), the release history of
+22.7 (RH1), the appendix J mode (J0 to J6) and the self-tests C10 to C18 (the compare-and-swap and
+monotonic decision, D5.5, the archive format, the reason check, the deployment log, its chain of
+releases and the release history, the deployed state and the pages run name). --registry <file> replaces the committed registry, for
+the self-tests only.
+
 Run from the repository root:
 
     python -I tests/datacheck/check_p22.py
@@ -40,6 +54,10 @@ Run from the repository root:
     python -I tests/datacheck/check_p22.py --state <store dir>
     python -I tests/datacheck/check_p22.py --state-scenario <dir>
     python -I tests/datacheck/check_p22.py --compare-saved <collection dir> [--compare-out <file.json>]
+    python -I tests/datacheck/check_p22.py --publication <econ dir or artifact.tar.gz> --state <store dir> [--previous-release <release dir>]
+    python -I tests/datacheck/check_p22.py --release <release dir> [--expect <snapshot>:<sha256>] [--previous-release <release dir>]
+    python -I tests/datacheck/check_p22.py --release-history <folder of release folders> [--deployed <deployed status/deployments.json>]
+    python -I tests/datacheck/check_p22.py --publication-scenario <dir>
 
 With --root the pipeline root <dir> (section 17.1: live/, archive/files/,
 archive/manifests/, archive/holds/, archive/state/) is verified in addition to the
@@ -144,7 +162,8 @@ SAFE_INT = 2 ** 53 - 1
 COUNTS = {"PASS": 0, "FAIL": 0, "SKIP": 0}
 ROOT_MODE = False  # set by --root
 LIVE_MODE = False  # set by --live, --state and --state-scenario (21.3: a live root is not the scenario)
-CONVENTIONS = "v0.7"  # 4.1: the version of the text the registry was written for (v0.7, appendix F9)
+CONVENTIONS = "v0.8"  # 4.1: the version of the text the registry was written for (v0.8, 22.9)
+V07_CONVENTIONS = "v0.7"  # I7: the registry version before v0.8
 LEGACY_CONVENTIONS = "v0.6"  # the version a Stage B root was written under (see LEGACY in section_root)
 REGISTRY_SCHEMA = "rmf.econ.registry/4"  # 4.1 (v0.6, appendix E8; unchanged in v0.7)
 SCHEMA_IDS = {  # 8, 9, 14.1, 17.5, 4.1, 20.3, 21.1, 21.2, 21.4 (v0.7, appendix F9)
@@ -158,6 +177,21 @@ SCHEDULE_LINES_V06 = ["17 * * * 1-5", "17 15 * * 0,6"]  # decision P8, in force 
 SCHEDULE_UTC_TIMES = ("00:17", "04:17", "08:17", "12:17", "16:17", "20:17")  # 14.2 lists them
 RUN_GAP_WARNING_HOURS, RUN_GAP_CRITICAL_HOURS = 9, 26  # 14.3 (F7): it was 26 and 50
 GITATTRIBUTES = b"* -text\n"  # 21.2: exactly these 8 bytes
+# v0.8 (appendix I)
+MANIFEST_V4 = "rmf.econ.manifest/4"  # 9 (I2); no schema file exists, the shape is built from the text (build_v08_shapes)
+DEPLOYMENTS_ID = "rmf.econ.deployments/1"  # 22.4; no schema file exists either
+NYFED = "nyfed-markets"
+NYFED_TERMS_V07 = "https://www.newyorkfed.org/termsofuse"  # I7: the v0.7 value
+NYFED_TERMS_V08 = "https://www.newyorkfed.org/privacy/termsofuse"  # 22.9: the v0.8 value
+TERMS_CHECKED_V07, TERMS_CHECKED_V08 = "2026-11-16", "2026-11-20"  # I7, 22.9
+NOTICE_STATEMENT = ("RadMage Finance dedicates to the public domain under CC0 1.0 Universal (https://creativecommons.org/publicdomain/zero/1.0/) "
+                    "only these original contributions of its own: the run, publication and deployment records in status/, and the status, "
+                    "freshness, deadline and timing fields it adds to these files. Nothing else is designated. The data from each provider, "
+                    "including values derived from it, stays under that provider's terms above; RadMage Finance claims no ownership of it and "
+                    "grants no license to it. The software that produces these files is licensed separately.")  # 22.9 (brief O), exactly one line
+NOT_COLLECTION_KEYS = {"publish-failed": "publish.yml report", "publication-verify-failed": "publish.yml report", "manifest-missing": "the watcher",
+                       "manifest-overdue": "the watcher", "publication-history-changed": "the watcher"}  # 22.6 table, 21.5 v0.8
+PUBLICATION_ALERT_KEYS = ("publish-failed", "publication-verify-failed", "publication-behind", "publication-facts-unavailable", "publication-history-changed")  # 17.8 v0.8
 RESPONSE_FIELDS = ("n", "host", "url", "requested_at", "status", "content_type", "content_length", "etag",
                    "last_modified", "date", "bytes", "sha256")  # 20.2 (F1): exactly twelve, each always present
 RESPONSE_INT_FIELDS = ("n", "status", "bytes")  # 20.2: integers; the others text
@@ -885,7 +919,11 @@ def load_state():
     st.schemas = {}
     for name in ("registry", "object", "snapshot", "manifest", "revisions", "runs", "review", "review-queue", "publications", "pins", "alerts", "holidays",
                  "rollback", "state", "state-v2", "accepted", "collection"):  # v0.6 adds rollback/1 and state/1; v0.7 state/2, accepted/1, collection/1
-        st.schemas[name] = load_strict((SCHEMA_DIR / f"{name}.schema.json").read_bytes())
+        f = SCHEMA_DIR / f"{name}.schema.json"
+        if name == "manifest" and (SCHEMA_DIR / "manifest-v3.schema.json").is_file():
+            f = SCHEMA_DIR / "manifest-v3.schema.json"  # I31, I41: the historical manifest/3 files
+        st.schemas[name] = load_strict(f.read_bytes())
+    build_v08_shapes(st)  # v0.8: manifest/4 and deployments/1 are built from the text; their schema files are probed by S7 (I31)
     st.source_records = load_strict((SCHEMA_DIR / "source-records.json").read_bytes())
     st.tree_files = sorted(p for p in TREE.rglob("*") if p.is_file())
     st.tree_json, st.tree_json_errors = {}, {}
@@ -1591,13 +1629,88 @@ def section_schemas(st):
         if name is None:
             check(f"S1 {relpath} has a schema (12.8)", ["no schema in pipeline/schemas/ covers this path"])
             continue
+        schema = manifest_schema_for(st, value) if name == "manifest" else st.schemas[name]
+        label = "manifest/4 (built from the text)" if schema is not st.schemas.get(name) else f"{name}.schema.json"
         try:
-            errs = schema_errors(value, st.schemas[name])
+            errs = schema_errors(value, schema)
         except SchemaKeywordError as exc:
-            check(f"S1 {relpath} validates against {name}.schema.json (12.8)", [f"validator cannot evaluate: {exc}"])
+            check(f"S1 {relpath} validates against {label} (12.8)", [f"validator cannot evaluate: {exc}"])
             continue
-        check(f"S1 {relpath} validates against {name}.schema.json (12.8)", errs)
+        check(f"S1 {relpath} validates against {label} (12.8)", errs)
     section_schemas_v04(st)
+    section_schemas_v08(st)
+
+
+def section_schemas_v08(st):
+    """S7 (v0.8): manifest/4 (9) and deployments/1 (22.4) have no schema file in pipeline/schemas/;
+    the checker builds both from the text (build_v08_shapes). The probes are documents the text
+    accepts or refuses."""
+    files = {doc.get("$id") for doc in (load_strict(x.read_bytes()) for x in sorted(SCHEMA_DIR.glob("*.json"))) if isinstance(doc, dict)}
+    missing = [x for x in (MANIFEST_V4, DEPLOYMENTS_ID) if x not in files]
+    sh = getattr(st, "v08_schemas", None) or build_v08_shapes(st)
+    p, n = [], 0
+    t, sha = "2026-11-24T15:00:00Z", "a" * 64
+
+    by_id = {}
+    for x in sorted(SCHEMA_DIR.glob("*.json")):
+        try:
+            doc = load_strict(x.read_bytes())
+        except Exception:
+            continue
+        if isinstance(doc, dict) and doc.get("$id") in (MANIFEST_V4, DEPLOYMENTS_ID):
+            by_id[doc["$id"]] = (x.name, doc)
+    file_for = {"manifest-v4": by_id.get(MANIFEST_V4), "deployments": by_id.get(DEPLOYMENTS_ID)}
+
+    def probe(label, name, doc, want):
+        nonlocal n
+        n += 1
+        for which, schema in [("the checker's shape", sh[name])] + ([(file_for[name][0], file_for[name][1])] if file_for[name] else []):
+            try:
+                got = not schema_errors(doc, schema)
+            except SchemaKeywordError as exc:
+                p.append(f"{label}: {which}: cannot evaluate: {exc}")
+                continue
+            if got != want:
+                p.append(f"{label}: {which} {'accepts' if got else 'refuses'} it, the text {'accepts' if want else 'refuses'} it")
+
+    ds = {"snapshot": "20261124T150000Z", "manifest_sha256": sha}
+    e = {"number": 1, "published_at": t, "run": "pub-123-1", "trigger": "manual", "dataset": ds, "release": "data-20261124T150000Z-123-1",
+         "site_commit": "0" * 40, "artifact": {"files": 10, "bytes": 1000, "sha256": sha}, "previous": None,
+         "verification": {"checker": {"pass": 5, "fail": 0, "skip": 0}, "post": None}}
+    dep = {"schema": DEPLOYMENTS_ID, "deployments": [e]}
+    probe("a deployment entry with the ten fields of 22.4", "deployments", dep, True)
+    for f in e:
+        probe(f"a deployment entry without {f} (22.4)", "deployments", dict(dep, deployments=[{k: v for k, v in e.items() if k != f}]), False)
+    probe("a trigger outside manual, timer, redeploy (22.4)", "deployments", dict(dep, deployments=[dict(e, trigger="schedule")]), False)
+    probe("post passed (22.4)", "deployments", dict(dep, deployments=[dict(e, verification={"checker": {"pass": 1, "fail": 0, "skip": 0}, "post": "passed"})]), True)
+    probe("post 'success' (22.4: passed or failed)", "deployments", dict(dep, deployments=[dict(e, verification={"checker": {"pass": 1, "fail": 0, "skip": 0}, "post": "success"})]), False)
+    probe("a 39-hex site_commit (22.4: 40-hex)", "deployments", dict(dep, deployments=[dict(e, site_commit="0" * 39)]), False)
+    probe("an extra top-level field", "deployments", dict(dep, note="x"), False)
+    m3, _ = None, None
+    tree_m = st.tree_json.get("manifest.json") if hasattr(st, "tree_json") else None
+    if isinstance(tree_m, dict):
+        m4 = json.loads(json.dumps(tree_m))
+        m4["schema"] = MANIFEST_V4
+        m4["rules"] = {"registry": {"path": "registry/econ-" + "a" * 16 + ".json", "sha256": sha}, "holidays": {"path": "registry/holidays-" + "b" * 16 + ".json", "sha256": sha},
+                       "notice": {"path": "notices/" + "c" * 16 + ".txt", "sha256": sha}, "registry_versions": []}
+        for summ in m4.get("series", {}).values():
+            summ.update(deadline=None, stale_at=None, revision_csvs=[])
+        probe("the example tree's manifest with the v0.8 fields (9)", "manifest-v4", m4, True)
+        probe("a manifest/4 without rules (9)", "manifest-v4", {k: v for k, v in m4.items() if k != "rules"}, False)
+        sid0 = sorted(m4.get("series", {}))[0]
+        for f in ("deadline", "stale_at", "revision_csvs"):
+            bad = json.loads(json.dumps(m4))
+            del bad["series"][sid0][f]
+            probe(f"a manifest/4 series without {f} (9)", "manifest-v4", bad, False)
+        bad = json.loads(json.dumps(m4))
+        bad["series"][sid0]["revision_csvs"] = [{"path": "revisions/effr/2026/" + "d" * 16 + ".json", "sha256": sha}]
+        probe("a revision CSV path ending .json (10)", "manifest-v4", bad, False)
+        bad = json.loads(json.dumps(m4))
+        bad["rules"]["notice"]["path"] = "NOTICE.txt"
+        probe("rules.notice naming NOTICE.txt (22.9: outside the manifest)", "manifest-v4", bad, False)
+        probe("a manifest/3 document under the manifest/4 shape", "manifest-v4", tree_m, False)
+    check("S7 the v0.8 shapes built from the text: manifest/4 (9: deadline, stale_at, revision_csvs, rules) and deployments/1 (22.4) accept and refuse what the text does" +
+          (f"; pipeline/schemas/ has no file for {', '.join(missing)} (the shapes are the checker's own, 12.8)" if missing else ""), p, f"{n} probes")
 
 
 def _schema_accepts(schema, doc):
@@ -2199,12 +2312,12 @@ def csv_table(ser, obs):
     return header, rows
 
 
-def csv_segment_bytes(st, ser, obs, segment, retrieved_at):
+def csv_segment_bytes(st, ser, obs, segment, retrieved_at, reg=None):
     """16 (v0.4): the CSV of one segment. Comment lines in this order: title with unit, the
     attribution and notice filled ({year} from the segment's retrieval time, decision P5),
     the terms link, the derivation text, 'Segment <segment>: <first> to <last>.' and
     'Retrieved <retrieval time> by RadMage Finance.'; then the header and the rows."""
-    src = st.registry["sources"][ser["source"]]
+    src = (reg or st.registry)["sources"][ser["source"]]  # v0.8: reg is an earlier registry version (22.9)
     year = et_date(parse_utc(retrieved_at)).year
     lines = [f"# {ser['title']} ({ser['unit_label']})", "# " + fill_placeholders(src["attribution"], ser["data_name"], year)]
     if src.get("notice"):
@@ -2615,8 +2728,11 @@ def section_tree(st):
 
     rh = snapshot.get("run", {}).get("registry_sha256")
     canon_h = sha256_hex(canon_bytes(st.registry))
-    check("T9 snapshot run.registry_sha256 is the SHA-256 of the registry's canonical form (4, 8)",
-          [] if rh == canon_h else [f"{rh} is not {canon_h}" + (" (it is the hash of the file bytes)" if rh == sha256_hex(st.registry_bytes) else "")])
+    tree_v07 = manifest.get("schema") != MANIFEST_V4  # 22.9: a manifest/3 tree is a file written under v0.7
+    v07_h = registry_versions(st)["v0.7"][0]
+    check("T9 snapshot run.registry_sha256 is the SHA-256 of the registry's canonical form, the current one or the v0.7 one of I7 (4, 8, 22.9: a file's own version marks it)",
+          [] if rh in (canon_h, v07_h) else [f"{rh} is not {canon_h} nor the v0.7 registry's {v07_h}" + (" (it is the hash of the file bytes)" if rh == sha256_hex(st.registry_bytes) else "")])
+    tree_reg = registry_by_hash(st).get(rh, (None, None, st.registry))[2]
 
     # Per-series snapshot state (8)
     for sid in sorted(snap_ids & reg_ids):
@@ -2727,7 +2843,7 @@ def section_tree(st):
     if set(notices) != used_sources:
         problems.append(f"snapshot notices for {sorted(notices)}, the registered series use {sorted(used_sources)}")
     for src in sorted(used_sources & set(notices)):
-        reg_src = st.registry["sources"][src]
+        reg_src = tree_reg["sources"][src]  # v0.8: the registry version the snapshot was built with (I7)
         for f in ("attribution", "notice", "terms_url"):
             if notices[src].get(f) != reg_src.get(f):
                 problems.append(f"snapshot {src}: {f} is not the registry text with placeholders kept (8)")
@@ -2881,6 +2997,11 @@ def section_tree(st):
             if ref is None:
                 problems.append(f"no object of segment {entry.get('segment')} in the snapshot")
             want = csv_segment_bytes(st, ser, obs, entry.get("segment"), entry.get("retrieved_at")).decode("utf-8").split("\n")[:-1]
+            if tree_v07 and ser["source"] == NYFED and data.decode("utf-8").split("\n")[:-1] != want:
+                # 22.9: a manifest generated before the first v0.8 run may carry the old terms URL in a New York Fed CSV
+                alt = csv_segment_bytes(st, ser, obs, entry.get("segment"), entry.get("retrieved_at"), reg=registry_versions(st)["v0.7"][2]).decode("utf-8").split("\n")[:-1]
+                if data.decode("utf-8").split("\n")[:-1] == alt:
+                    want = alt
             want_comments = [l[2:] for l in want if l.startswith("# ")]
             if len(comments) != len(want_comments):
                 problems.append(f"{len(comments)} comment lines, 16 gives {len(want_comments)}: {want_comments}")
@@ -3022,6 +3143,27 @@ def section_registry(st):
     if sorted(reg) != sorted(want_top):
         p.append(f"top-level fields {sorted(reg)}, 4.1 names {sorted(want_top)} (unknown fields fail validation)")
     check(f"R2 top level: schema {REGISTRY_SCHEMA}, conventions {CONVENTIONS}, family econ, holiday_table fed-holidays.json, no other field (4.1)", p)
+    # R31 (v0.8, 22.9, I7): the three registry changes of v0.8, and nothing else differs from the v0.7 version
+    p = []
+    srcs = reg.get("sources") if isinstance(reg.get("sources"), dict) else {}
+    if (srcs.get(NYFED) or {}).get("terms_url") != NYFED_TERMS_V08:
+        p.append(f"sources.{NYFED}.terms_url is {(srcs.get(NYFED) or {}).get('terms_url')!r}, 22.9 gives {NYFED_TERMS_V08!r}")
+    for src_id, src in sorted(srcs.items()):
+        if isinstance(src, dict) and src.get("terms_checked") != TERMS_CHECKED_V08:
+            p.append(f"sources.{src_id}.terms_checked is {src.get('terms_checked')!r}, 22.9 gives {TERMS_CHECKED_V08!r}")
+    v07 = registry_as_of(reg, "v0.7")
+    back = json.loads(json.dumps(v07))
+    back["conventions"] = CONVENTIONS
+    for src_id, src in (back.get("sources") or {}).items():
+        if isinstance(src, dict):
+            src["terms_checked"] = TERMS_CHECKED_V08
+            if src_id == NYFED:
+                src["terms_url"] = NYFED_TERMS_V08
+    if canon_bytes(back) != canon_bytes(reg) and not p:
+        p.append("the registry differs from its v0.7 version (I7) in more than conventions, the New York Fed terms_url and terms_checked")
+    vers = registry_versions(st)
+    check("R31 the v0.8 registry changes (22.9): the New York Fed terms_url https://www.newyorkfed.org/privacy/termsofuse and terms_checked 2026-11-20 for all three sources; the v0.7 and v0.6 versions are derived by the substitutions of I7", p,
+          f"current {vers['current'][0][:16]}, v0.7 {vers['v0.7'][0][:16]}, v0.6 {vers['v0.6'][0][:16]}")
     fp = reg.get("family_policy")
     p = [] if fp == FAMILY_POLICY else [f"got {fp}"]
     if isinstance(fp, dict) and fp.get("review") != FAMILY_POLICY["review"]:
@@ -4347,6 +4489,10 @@ RX_OBJECT_PATH = re.compile(r"objects/(%s)/(\d{4}|all)/([0-9a-f]{16})\.json" % S
 RX_CSV_PATH = re.compile(r"series/(%s)/(\d{4}|all)/([0-9a-f]{16})\.csv" % SLUG, re.ASCII)  # 9, 16 (v0.4): one per segment
 RX_FULL_CSV_PATH = re.compile(r"series/(%s)/([0-9a-f]{16})\.csv" % SLUG, re.ASCII)  # v0.3 full-history CSV: none in v0.4
 RX_LOG_PATH = re.compile(r"revisions/(%s)/(\d{4})/([0-9a-f]{16})\.json" % SLUG, re.ASCII)
+RX_REVCSV_PATH = re.compile(r"revisions/(%s)/(\d{4})/([0-9a-f]{16})\.csv" % SLUG, re.ASCII)  # 10 (v0.8): a CSV per log version
+RX_REGCOPY_PATH = re.compile(r"registry/econ-([0-9a-f]{16})\.json", re.ASCII)  # 22.9: a registry version
+RX_HOLCOPY_PATH = re.compile(r"registry/holidays-([0-9a-f]{16})\.json", re.ASCII)  # 22.9: the holiday table in use
+RX_NOTICE_PATH = re.compile(r"notices/([0-9a-f]{16})\.txt", re.ASCII)  # 22.9: the notice file
 RX_SNAPSHOT_PATH = re.compile(r"snapshots/(\d{8}T\d{6}Z)\.json", re.ASCII)
 RX_COPY_PATH = re.compile(r"series/(%s)\.csv" % SLUG, re.ASCII)
 RX_HOLD_PATH = re.compile(r"(%s)/([0-9a-f]{16})\.json" % SLUG, re.ASCII)
@@ -4495,6 +4641,10 @@ def rx_kind(relpath):
         return "object"
     if RX_LOG_PATH.fullmatch(relpath):
         return "revisions"
+    if RX_REGCOPY_PATH.fullmatch(relpath):
+        return "registry"  # 22.9 (v0.8): a registry version
+    if RX_HOLCOPY_PATH.fullmatch(relpath):
+        return "holidays"  # 22.9 (v0.8): the holiday table in use
     return None
 
 
@@ -4525,8 +4675,10 @@ def rx_named_files(ctx, snap_id):
             if err or (m.get("snapshot") or {}).get("id") != snap_id:
                 continue
             for summ in m.get("series", {}).values():
-                for r in rx_csv_refs(summ) + list(summ.get("revisions", [])):
+                for r in rx_csv_refs(summ) + list(summ.get("revisions", [])) + rx_list(summ.get("revision_csvs")):
                     out.setdefault(r.get("path"), (r.get("sha256"), None))
+            for r in rx_rule_refs(m):  # reading (v0.8): the rule files of every archived manifest that names the snapshot, like its CSVs (9: a cached manifest never names a missing file)
+                out.setdefault(r.get("path"), (r.get("sha256"), None))
         ctx.named_cache[snap_id] = out
     return ctx.named_cache[snap_id]
 
@@ -4548,11 +4700,23 @@ def rx_csv_refs(summ):
     return refs
 
 
+def rx_list(x):
+    return [r for r in x if isinstance(r, dict)] if isinstance(x, list) else []
+
+
+def rx_rule_refs(manifest):
+    """9, 22.9 (v0.8): the rule files a manifest/4 names: rules.registry, holidays, notice and registry_versions."""
+    rules = manifest.get("rules") if isinstance(manifest, dict) and isinstance(manifest.get("rules"), dict) else {}
+    return [rules[k] for k in ("registry", "holidays", "notice") if isinstance(rules.get(k), dict)] + rx_list(rules.get("registry_versions"))
+
+
 def rx_manifest_files(manifest):
     out = {}
     for summ in manifest.get("series", {}).values():
-        for r in list(summ.get("objects", [])) + rx_csv_refs(summ) + list(summ.get("revisions", [])):
+        for r in list(summ.get("objects", [])) + rx_csv_refs(summ) + list(summ.get("revisions", [])) + rx_list(summ.get("revision_csvs")):
             out[r.get("path")] = (r.get("sha256"), None)
+    for r in rx_rule_refs(manifest):
+        out[r.get("path")] = (r.get("sha256"), None)
     return out
 
 
@@ -4634,6 +4798,9 @@ def rx_significant(ctx):
 
 
 def rx_pins(ctx):
+    over = getattr(ctx, "pins_override", None)
+    if over is not None:  # 22.3 (v0.8): a release's window uses its manifest's own pages_window
+        return [{"snapshot": x} for x in over]
     doc, _ = ctx.rv.load(ctx.rv.state, "pins.json")
     pins = doc.get("pins") if isinstance(doc, dict) else None
     return [p for p in pins if isinstance(p, dict)] if isinstance(pins, list) else []
@@ -4666,6 +4833,9 @@ def rx_window(ctx):
     files = {}
     for path, (sha, _) in rx_manifest_files(m).items():
         files[path] = [sha, None, ["named by the manifest"]]
+    if m.get("schema") == MANIFEST_V4:
+        nref = (m.get("rules") or {}).get("notice") or {}
+        files["NOTICE.txt"] = [nref.get("sha256"), None, ["the live copy of the notice file (22.9)"]]
     for sid_, why in sorted(snaps.items()):
         label = f"snapshot {sid_} ({'; '.join(why)})"
         for path, (sha, nbytes) in rx_named_files(ctx, sid_).items():
@@ -5076,7 +5246,9 @@ def rc_layout(ctx):
     check("T32 no leftover staging content (17.1: removed when the run ends)", [f"staging/{x}" for x in left])
     top = {x.split("/", 1)[0] for x in rv.files(rv.live)} | {x.name for x in rv.live.iterdir()} if rv.live.is_dir() else set()
     allowed = {"manifest.json", "objects", "snapshots", "series", "revisions", "status"}
-    p = [f"live/{x} is not part of the namespace" for x in sorted(top - allowed)]
+    if isinstance(ctx.manifest, dict) and ctx.manifest.get("schema") == MANIFEST_V4:
+        allowed |= {"registry", "notices", "NOTICE.txt"}  # 22.3, 22.9 (v0.8): the rule files, live with every manifest/4
+    p = [f"live/{x} is not part of the namespace" + (" (the rule files of 22.9 come with a manifest/4)" if x in ("registry", "notices", "NOTICE.txt") else "") for x in sorted(top - allowed)]
     for must in ("manifest.json", "status/runs.json", "status/publications.json"):
         if rv.read(rv.live, must) is None:
             p.append(f"live/{must} missing")
@@ -5132,7 +5304,9 @@ def rc_schemas(ctx):
             schema = hit[1]
         if base == rv.state and f == "review-queue.json" and isinstance(v, dict) and v.get("schema") != SCHEMA_IDS["review-queue"]:
             p.append(f"{where}: schema {v.get('schema')!r}, 17.5 gives {SCHEMA_IDS['review-queue']}")
-        if kind in SCHEMA_IDS and isinstance(v, dict) and v.get("schema") != SCHEMA_IDS[kind]:
+        if kind == "manifest" and isinstance(v, dict) and v.get("schema") in (SCHEMA_IDS["manifest"], MANIFEST_V4):
+            schema = manifest_schema_for(st, v)  # 9, 22.9 (v0.8): manifest/3 before the first v0.8 run, manifest/4 from it (T119)
+        elif kind in SCHEMA_IDS and isinstance(v, dict) and v.get("schema") != SCHEMA_IDS[kind]:
             p.append(f"{where}: schema {v.get('schema')!r}, the text gives {SCHEMA_IDS[kind]} (8, 9, 14.1, 17.5)")
         if schema is None and base == rv.state and isinstance(v, dict) and isinstance(v.get("schema"), str):
             hit = rx_schema_by_id(st, v["schema"])
@@ -5159,7 +5333,7 @@ def rc_manifest_live(ctx):
     p, n = [], 0
     for sid, summ in sorted(m.get("series", {}).items()):
         groups = (("object", RX_OBJECT_PATH, summ.get("objects", [])), ("CSV segment", RX_CSV_PATH, rx_csv_refs(summ)),
-                  ("revision log version", RX_LOG_PATH, summ.get("revisions", [])))
+                  ("revision log version", RX_LOG_PATH, summ.get("revisions", [])), ("revision CSV", RX_REVCSV_PATH, rx_list(summ.get("revision_csvs"))))
         for label, rx, refs in groups:
             for ref in refs:
                 n += 1
@@ -5452,25 +5626,43 @@ def rc_snapshot_chain(ctx):
                 p.append(f"{sid_}: no series' objects, no status between published, held and not yet published, no hold candidate and no frozen series differs from {base_id} (8, 17.3: no snapshot is written then)")
     check("T45 the snapshot chain: previous is the snapshot before in time, ids are the run's time, attempt.at is the run's now, and each snapshot records a change (3, 8, 17.2, 17.3)", p, f"{len(ctx.order)} snapshots")
 
-    p, n_legacy = [], 0
-    legacy_hash = rx_legacy_registry_hash(ctx)
+    p, n_legacy, n_v07, n_arch = [], 0, 0, 0
+    by_hash = registry_by_hash(st)
+    arch_regs = rx_archived_registries(ctx)
+    seen_v08 = None
     for sid_ in ctx.order:
         s = ctx.snaps[sid_]
         rh = (s.get("run") or {}).get("registry_sha256")
-        if rh != reg_hash and rx_legacy(ctx, s.get("created_at")) and rh == legacy_hash:
-            n_legacy += 1  # written under v0.6: the same registry with conventions v0.6 (see LEGACY in section_root)
-        elif rh != reg_hash:
-            p.append(f"{sid_}: run.registry_sha256 {rh} is not the registry's canonical hash {reg_hash}"
-                     + (f" (nor, for a snapshot written before v0.7, the hash {legacy_hash[:16]} of the same registry with conventions {LEGACY_CONVENTIONS})" if rx_legacy(ctx, s.get("created_at")) else ""))
+        allowed = rx_snapshot_registry(ctx, s)  # 22.9 (v0.8) and 21.1: which registry versions this snapshot may record
+        found = rx_registry_for(ctx, rh)
+        if rh not in allowed and found is not None and found[0] == "archived":
+            n_arch += 1  # 22.9 (I44): the archived copy of an earlier v0.8 run's registry (an edit within the version)
+        elif rh in arch_regs and arch_regs[rh][2] and rh not in allowed:
+            p.append(f"{sid_}: its registry copy registry/econ-{rh[:16]}.json is not a valid registry: {arch_regs[rh][2][0]} (22.9)")
+        elif rh in allowed:
+            if allowed[rh] == "v0.6" and rh != registry_versions(st)["v0.7"][0]:
+                n_legacy += 1  # written under v0.6: the v0.7 registry with conventions v0.6 (21.1, I7)
+            elif allowed[rh] == "v0.7" and rh != reg_hash:
+                n_v07 += 1  # written under v0.7: the current registry with the substitutions of I7 reversed
+        else:
+            p.append(f"{sid_}: run.registry_sha256 {str(rh)[:16]} is found neither as an archived registry copy of a v0.8 run nor as " + " nor ".join(f"the {v} registry's {h[:16]}" for h, v in allowed.items())
+                     + " (22.9, I44, I7" + (", 21.1" if rx_legacy(ctx, s.get("created_at")) else "") + ")")
+        reg_used = (found or (None, None, st.registry))[2]
+        conv = reg_used.get("conventions") if isinstance(reg_used, dict) else None
+        if conv not in (V07_CONVENTIONS, LEGACY_CONVENTIONS) and found is not None and conv == CONVENTIONS:
+            seen_v08 = seen_v08 or sid_
+        elif conv in (V07_CONVENTIONS, LEGACY_CONVENTIONS) and seen_v08 is not None:
+            p.append(f"{sid_}: records a {conv} registry although {seen_v08} before it records a {CONVENTIONS} one (22.9: no snapshot with a v0.7 or v0.6 hash after one with the v0.8 hash)")
         notices = s.get("notices", {})
         if set(notices) != used_sources:
             p.append(f"{sid_}: notices for {sorted(notices)}, the registered series use {sorted(used_sources)}")
         for src in sorted(used_sources & set(notices)):
             for f in ("attribution", "notice", "terms_url"):
-                if notices[src].get(f) != st.registry["sources"][src].get(f):
-                    p.append(f"{sid_}: notices.{src}.{f} is not the registry text with its placeholders kept (8)")
-    check("T46 every snapshot carries the registry's canonical SHA-256 and the notices as written in the registry, placeholders kept (4, 4.3, 8)", p,
-          f"{n_legacy} snapshot(s) written before v0.7 carry the v0.6 registry's hash (21.1)" if n_legacy else "")
+                if notices[src].get(f) != reg_used["sources"][src].get(f):
+                    p.append(f"{sid_}: notices.{src}.{f} is not the text of the registry version it records, placeholders kept (8, 22.9)")
+    check("T46 every snapshot carries the canonical SHA-256 of the registry it was built with and its notices as written there, placeholders kept: the current registry, the archived copy of an earlier v0.8 run's registry (I44), or before v0.8 the v0.7 one of I7 and the v0.6 one up to the promoted dataset; none with a v0.7 or v0.6 registry after one with v0.8 (4, 4.3, 8, 21.1, 22.9)", p,
+          "; ".join(x for x in (f"{n_v07} snapshot(s) carry the v0.7 registry of I7" if n_v07 else "", f"{n_legacy} snapshot(s) written before v0.7 carry the v0.6 registry (21.1)" if n_legacy else "",
+                               f"{n_arch} snapshot(s) carry an archived v0.8 registry copy (I44)" if n_arch else "") if x))
 
 
 # --- T47 to T50: objects ---
@@ -5725,11 +5917,18 @@ def rc_manifest_summaries(ctx):
                 if oref is None or not is_time(ref.get("retrieved_at")):
                     p_csv.append(f"{w}: CSV {ref.get('path')} of segment {ref.get('segment')!r} has no object of that segment in the snapshot, or no retrieved_at (T87)")
                     continue
-                key = (ref.get("path"), ref.get("sha256"), ref["retrieved_at"], oref.get("sha256"))
+                pre_v08 = m.get("schema") != MANIFEST_V4  # 22.9: in a manifest/3
+                key = (ref.get("path"), ref.get("sha256"), ref["retrieved_at"], oref.get("sha256"), pre_v08)
                 if key not in csv_done:
                     data = rv.read(rv.arch, ref.get("path"))
                     seg_obs = rx_obs(ctx, {"objects": [oref]})
                     want = csv_segment_bytes(st, ser, seg_obs, ref.get("segment"), ref["retrieved_at"])
+                    if pre_v08 and ser["source"] == NYFED and data is not None and data != want:
+                        # 22.9: in a manifest/3 a New York Fed CSV's Terms: line may carry the old URL;
+                        # every other byte must match.
+                        alt = csv_segment_bytes(st, ser, seg_obs, ref.get("segment"), ref["retrieved_at"], reg=registry_versions(st)["v0.7"][2])
+                        if data == alt:
+                            want = alt
                     if data is None:
                         csv_done[key] = f"{ref.get('path')} is not in archive/files/"
                     elif sha256_hex(data) != ref.get("sha256"):
@@ -5835,6 +6034,8 @@ def rc_revision_logs(ctx):
     paths = sorted({f for base in (rv.live, rv.arch) for f in rv.files(base) if f.startswith("revisions/")})
     p, versions = [], {}
     for f in paths:
+        if RX_REVCSV_PATH.fullmatch(f):
+            continue  # 10 (v0.8): a revision CSV beside its log version, checked by T121
         mt = RX_LOG_PATH.fullmatch(f)
         base = rv.arch if rv.read(rv.arch, f) is not None else rv.live
         v, err = rv.load(base, f)
@@ -6455,9 +6656,7 @@ def rx_legacy(ctx, t):
 def rx_legacy_registry_hash(ctx):
     """The canonical hash of the committed registry with `conventions` set to v0.6: the registry
     a v0.6 run used when v0.7 changed nothing else in it (appendix F9 changes only conventions)."""
-    reg = json.loads(json.dumps(ctx.st.registry))
-    reg["conventions"] = LEGACY_CONVENTIONS
-    return sha256_hex(canon_bytes(reg))
+    return registry_versions(ctx.st)["v0.6"][0]  # v0.8: the v0.6 registry is derived by I7 (22.9)
 
 
 def rx_full_plan(ctx):
@@ -7644,6 +7843,9 @@ def rc_csv_segments(ctx):
         cur = ctx.snaps.get((good[idx][1].get("snapshot") or {}).get("id"))
         prev = ctx.snaps.get((good[idx - 1][1].get("snapshot") or {}).get("id"))
         o, po = rx_seg_objects(cur, sid).get(seg), rx_seg_objects(prev, sid).get(seg)
+        if (o is not None and po is not None and o.get("sha256") == po.get("sha256") and ctx.st.series.get(sid, {}).get("source") == NYFED
+                and good[idx][1].get("schema") == MANIFEST_V4 and good[idx - 1][1].get("schema") != MANIFEST_V4):
+            continue  # 22.9 (v0.8): the first accepting run after the registry change rewrites the New York Fed CSV segments under new paths
         if o is not None and po is not None and o.get("sha256") == po.get("sha256"):
             p92.append(f"{path} first appears in {name} although segment {seg} of {sid} has the same object as in the manifest it replaces {good[idx - 1][0]}: an unchanged segment written again (16, appendix C1)")
     # T93: every version is recoverable by its hash
@@ -8169,7 +8371,7 @@ def rc_archive(ctx):
     for f in rv.files(rv.live):
         # 9 (v0.4): convenience copies at fixed paths exist only "if a later version adds any";
         # v0.4 adds none, so every live file but the manifest and status/ is archived.
-        if f == "manifest.json" or f.startswith("status/"):
+        if f == "manifest.json" or f.startswith("status/") or f == "NOTICE.txt":  # 22.9: NOTICE.txt is live only
             continue
         n += 1
         a = rv.read(rv.arch, f)
@@ -8188,17 +8390,18 @@ def rc_archive(ctx):
     orphans = 0
     for f in rv.files(rv.arch):
         data = rv.read(rv.arch, f)
-        mt = RX_OBJECT_PATH.fullmatch(f) or RX_CSV_PATH.fullmatch(f) or RX_LOG_PATH.fullmatch(f)
+        mt = (RX_OBJECT_PATH.fullmatch(f) or RX_CSV_PATH.fullmatch(f) or RX_LOG_PATH.fullmatch(f) or RX_REVCSV_PATH.fullmatch(f)
+              or RX_REGCOPY_PATH.fullmatch(f) or RX_HOLCOPY_PATH.fullmatch(f) or RX_NOTICE_PATH.fullmatch(f))  # v0.8: revision CSVs and the rule files (10, 22.9)
         if mt:
             if mt.group(mt.lastindex) != sha256_hex(data)[:16]:
                 p.append(f"archive/files/{f}: content sha256 starts {sha256_hex(data)[:16]}, the name says {mt.group(mt.lastindex)}")
             if f not in named:
                 orphans += 1
         elif not RX_SNAPSHOT_PATH.fullmatch(f):
-            p.append(f"archive/files/{f} is not an object, snapshot, revision log version or CSV path (17.1)")
+            p.append(f"archive/files/{f} is not an object, snapshot, revision log version, CSV path, revision CSV or rule file (17.1, 10, 22.9)")
         if len(data) > LIMIT_FILE:
             p.append(f"archive/files/{f} is {len(data)} bytes, over 5 MB (17.7)")
-    check("T63 archive/files holds only objects, snapshots, revision log versions and CSV segments, each content-addressed file named by its own SHA-256 (17.1, 12.3)", p,
+    check("T63 archive/files holds only objects, snapshots, revision log versions, CSV segments and, from v0.8, revision CSVs and the rule files (registry and holiday copies, notice files), each content-addressed file named by its own SHA-256 (17.1, 12.3, 10, 22.9)", p,
           f"{len(rv.files(rv.arch))} files" + (f", {orphans} named by no snapshot or manifest (orphans are kept, 17.4)" if orphans else ""))
 
 
@@ -8503,7 +8706,9 @@ ALERT_TOKEN_SHAPES = ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_")
 ALERT_FIXED_KEYS = {"retention-decision": "critical", "gate-failed": "critical", "failed-runs": "critical", "recovered-staging": "warning", "alert-text-refused": "critical",
                     "workflow-disabled": "critical", "inactivity": None, "scheduled-run-gap": None, "consecutive-failures": "critical",
                     "manifest-overdue": None, "series-stale": "warning", "series-held": "warning", "manifest-missing": "critical",
-                    "self-check-unavailable": "warning"}  # v0.7 (17.8, 21.3); collect-failed is the issue job's only (21.5), never a ledger key
+                    "self-check-unavailable": "warning",  # v0.7 (17.8, 21.3); collect-failed is the issue job's only (21.5), never a ledger key
+                    "publication-behind": "warning", "publication-facts-unavailable": "warning",  # v0.8 (17.8, 22.4): the collection run's
+                    "publish-failed": "critical", "publication-verify-failed": "critical", "publication-history-changed": "critical"}  # v0.8: never in the collection ledger (T125)
 ALERT_SERIES_KEYS = {"frozen": "warning", "hold": "critical", "revision-large": "warning", "invalid-series": "critical", "stale": None,
                      "source-gap": "critical", "source-overdue": "warning"}  # 17.8 (v0.4 adds source-gap and source-overdue)
 ALERT_SOURCE_KEYS = {"invalid": "critical", "blocked": "critical", "fetch-failures": "warning",
@@ -8514,32 +8719,8 @@ ALERT_BUDGET_KEYS = ("published", "archive-month", "object", "file", "manifest",
 
 
 def alert_text_problems(text):
-    """The sanitization rules of 17.8 applied to one title or body."""
-    out, low = [], text.lower()
-    if len(text) > 2000:
-        out.append(f"{len(text)} characters, over 2,000")
-    if re.search(r"[?&][^\s?&=]+=", text):
-        out.append("a ? or & query string")
-    if re.search(r"[a-z][a-z0-9+.-]*://[^\s/]+/\S", low):
-        out.append("a full URL with a path")
-    if re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+", text):
-        out.append("an email address")
-    for mt in re.finditer(r"(?<![0-9.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![0-9.])", text, re.ASCII):
-        if all(int(g) <= 255 for g in mt.groups()):
-            out.append("an IPv4 address")
-            break
-    for h in ALERT_HEADER_NAMES:
-        if h in low:
-            out.append(f"the header name {h}")
-    if "bearer " in low:
-        out.append("'Bearer '")
-    for t in ALERT_TOKEN_SHAPES:
-        if t in text:
-            out.append(f"the token shape {t}")
-    rest = re.sub(r"sha256:[0-9a-f]{64}(?![0-9A-Za-z+/=])", " ", text)
-    if re.search(r"[0-9A-Za-z+/]{32,}", rest):
-        out.append("a run of 32 or more hex or base64 characters that is not a sha256: hash")
-    return out
+    """17.8 (v0.8): the alert text check is the reason check of 22.3, items 1 to 9 (d6_problems)."""
+    return [f"refused by the 22.3 item {name}" for name in d6_problems(text)]
 
 
 def rc_alerts(ctx):
@@ -8846,8 +9027,9 @@ def rc_line_endings(ctx):
             if b"\r" not in data:
                 continue
             conv = data.replace(b"\r\n", b"\n")
-            mt = re.search(r"([0-9a-f]{16})\.(?:json|csv)$", f)
-            if mt and (base == rv.holds or RX_OBJECT_PATH.fullmatch(f) or RX_CSV_PATH.fullmatch(f) or RX_LOG_PATH.fullmatch(f)):
+            mt = re.search(r"([0-9a-f]{16})\.(?:json|csv|txt)$", f)
+            if mt and (base == rv.holds or RX_OBJECT_PATH.fullmatch(f) or RX_CSV_PATH.fullmatch(f) or RX_LOG_PATH.fullmatch(f) or RX_REVCSV_PATH.fullmatch(f)
+                       or RX_REGCOPY_PATH.fullmatch(f) or RX_HOLCOPY_PATH.fullmatch(f) or RX_NOTICE_PATH.fullmatch(f)):
                 match = sha256_hex(conv)[:16] == mt.group(1)
             elif base in (rv.live, rv.arch) and f in snap_sha:
                 match = sha256_hex(conv) == snap_sha[f]
@@ -8890,6 +9072,675 @@ def rc_alert_keys_v07(ctx):
             p.append(f"run record {rec.get('id')} lists collect-failed among its alerts (21.5: from the issue job only)")
     check("T118 the alert keys of v0.7: self-check-unavailable a warning (21.3), budget:state-store a warning or critical (21.4), and collect-failed never in the ledger nor in a run record (21.5: the issue job's own key) (17.8)", p,
           f"{len(opens)} open alert(s), {n} run record(s)")
+
+
+# ---------------------------------------------------------------------------
+# v0.8 (appendix I): registry versions (I7), the first v0.8 run, manifest/4 (9), revision CSVs
+# (10), the rule files and the notice file (22.9), the reasons (D6, 17.8, 21.6, 22.3), the
+# deployment log (22.4) and the publication alert keys (17.8). Root checks T119 to T125.
+# ---------------------------------------------------------------------------
+
+
+def registry_as_of(reg, version):
+    """22.9, I7: an earlier registry version is the current registry with the substitutions of
+    appendix I. v0.7: conventions v0.7, the New York Fed terms_url https://www.newyorkfed.org/termsofuse,
+    terms_checked 2026-11-16 for every source. v0.6: the v0.7 registry with conventions v0.6 (21.1).
+    reading: a substitution sets the value, so deriving from a registry that still says v0.7 gives
+    that registry itself, and the current registry is used as it is."""
+    r = json.loads(json.dumps(reg))
+    if version == "current":
+        return r
+    r["conventions"] = V07_CONVENTIONS
+    srcs = r.get("sources") if isinstance(r.get("sources"), dict) else {}
+    for src_id, src in srcs.items():
+        if not isinstance(src, dict):
+            continue
+        if "terms_checked" in src:
+            src["terms_checked"] = TERMS_CHECKED_V07
+        if src_id == NYFED:
+            src["terms_url"] = NYFED_TERMS_V07
+    if version == "v0.6":
+        r["conventions"] = LEGACY_CONVENTIONS
+    return r
+
+
+def registry_versions(st):
+    """{'current' | 'v0.7' | 'v0.6': (sha256 of the canonical bytes, canonical bytes, registry)}."""
+    if getattr(st, "reg_versions", None) is None:
+        out = {}
+        for v in ("current", "v0.7", "v0.6"):
+            reg = registry_as_of(st.registry, v)
+            b = canon_bytes(reg)
+            out[v] = (sha256_hex(b), b, reg)
+        st.reg_versions = out
+    return st.reg_versions
+
+
+def registry_by_hash(st):
+    """sha256 to (version, canonical bytes, registry); the current registry wins on equal hashes."""
+    out = {}
+    for v in ("v0.6", "v0.7", "current"):
+        h, b, r = registry_versions(st)[v]
+        out[h] = (v, b, r)
+    return out
+
+
+def registry_copy_problems(st, data, sha):
+    """22.9 (I44): a registry copy is canonical JSON hashing to its name and valid against the registry schema."""
+    try:
+        doc = load_strict(data)
+    except Exception as exc:
+        return None, [f"{type(exc).__name__}: {exc}"]
+    p = []
+    if sha256_hex(data) != sha:
+        p.append(f"it hashes to {sha256_hex(data)[:16]}, not {sha[:16]}")
+    why = canonical_problem(data, doc)
+    if why:
+        p.append(why)
+    try:
+        p += schema_errors(doc, st.schemas["registry"])[:3]
+    except SchemaKeywordError as exc:
+        p.append(f"validator cannot evaluate: {exc}")
+    return doc, p
+
+
+def rx_archived_registries(ctx):
+    """22.9 (I44): the registry copies in archive/files/, written by v0.8 runs: sha256 to (bytes, registry or None, problems)."""
+    if getattr(ctx, "arch_regs", None) is None:
+        ctx.arch_regs = {}
+        for f in ctx.rv.files(ctx.rv.arch):
+            mt = RX_REGCOPY_PATH.fullmatch(f)
+            if mt:
+                data = ctx.rv.read(ctx.rv.arch, f)
+                h = sha256_hex(data)
+                if h[:16] == mt.group(1):
+                    doc, prob = registry_copy_problems(ctx.st, data, h)
+                    ctx.arch_regs[h] = (data, doc, prob)
+    return ctx.arch_regs
+
+
+def rx_registry_for(ctx, sha):
+    """22.9 (I44): the registry a hash names: the current one, an archived copy of an earlier v0.8 run, or
+    for a snapshot written before v0.8 the I7 derivation. Returns (how, canonical bytes, registry) or None."""
+    by_hash = registry_by_hash(ctx.st)
+    if sha in by_hash and by_hash[sha][0] == "current":
+        return by_hash[sha]
+    arch = rx_archived_registries(ctx)
+    if sha in arch and arch[sha][1] is not None and not arch[sha][2]:
+        return ("archived", arch[sha][0], arch[sha][1])
+    if sha in by_hash:
+        return by_hash[sha]
+    return None
+
+
+def rx_v08_from(ctx):
+    """22.9 'the first v0.8 run' (reading, the text gives no marker): the earliest of the first
+    manifest that is rmf.econ.manifest/4 and, once the registry differs from its v0.7 version, the
+    first snapshot carrying the current registry's hash. None while neither exists."""
+    if getattr(ctx, "v08_from_cache", "unset") == "unset":
+        times = []
+        for _, m, err in getattr(ctx, "arch_manifests", []):
+            if not err and isinstance(m, dict) and m.get("schema") == MANIFEST_V4 and is_time(m.get("generated_at")):
+                times.append(m["generated_at"])
+        man = getattr(ctx, "manifest", None)
+        if isinstance(man, dict) and man.get("schema") == MANIFEST_V4 and is_time(man.get("generated_at")):
+            times.append(man["generated_at"])
+        vers = registry_versions(ctx.st)
+        if vers["current"][0] != vers["v0.7"][0]:
+            for s in getattr(ctx, "snaps", {}).values():
+                if isinstance(s, dict) and (s.get("run") or {}).get("registry_sha256") == vers["current"][0] and is_time(s.get("created_at")):
+                    times.append(s["created_at"])
+        ctx.v08_from_cache = min(times) if times else None
+    return ctx.v08_from_cache
+
+
+def rx_v08(ctx, t):
+    """Whether a file made at time t is from the first v0.8 run on (22.9)."""
+    b = rx_v08_from(ctx)
+    return b is not None and isinstance(t, str) and t >= b
+
+
+def rx_snapshot_registry(ctx, snap):
+    """22.9 (v0.8, I22): a file's own version marks it. A snapshot may record the current registry
+    or the v0.7 one of I7; the v0.6 one only up to the promoted dataset (21.1). Returns {sha256: version}."""
+    vers = registry_versions(ctx.st)
+    out = {vers["current"][0]: "current"}
+    out.setdefault(vers["v0.7"][0], "v0.7")
+    if rx_legacy(ctx, (snap or {}).get("created_at")):
+        out.setdefault(vers["v0.6"][0], "v0.6")
+    return out
+
+
+def build_v08_shapes(st):
+    """9 and 22.4 give manifest/4 and deployments/1, but pipeline/schemas/ has no file for either
+    (the text wins, preamble), so their shapes are built here from the text: manifest/4 is the
+    manifest/3 schema file plus the four v0.8 fields; deployments/1 is written from 22.4."""
+    m3 = json.loads(json.dumps(st.schemas["manifest"]))
+    m4 = m3
+    m4["$id"] = MANIFEST_V4
+    m4["title"] = "manifest/4 built by the checker from section 9 (v0.8): no schema file exists"
+    m4.setdefault("properties", {})["schema"] = {"const": MANIFEST_V4}
+    defs = m4.setdefault("$defs", {})
+    defs["regRef"] = {"type": "object", "additionalProperties": False, "required": ["path", "sha256"],
+                      "properties": {"path": {"type": "string", "pattern": "^registry/econ-[0-9a-f]{16}\\.json$"}, "sha256": {"$ref": "#/$defs/sha256"}}}
+    defs["holRef"] = {"type": "object", "additionalProperties": False, "required": ["path", "sha256"],
+                      "properties": {"path": {"type": "string", "pattern": "^registry/holidays-[0-9a-f]{16}\\.json$"}, "sha256": {"$ref": "#/$defs/sha256"}}}
+    defs["noticeRef"] = {"type": "object", "additionalProperties": False, "required": ["path", "sha256"],
+                         "properties": {"path": {"type": "string", "pattern": "^notices/[0-9a-f]{16}\\.txt$"}, "sha256": {"$ref": "#/$defs/sha256"}}}
+    defs["revCsvRef"] = {"type": "object", "additionalProperties": False, "required": ["path", "sha256"],
+                         "properties": {"path": {"type": "string", "pattern": "^revisions/[a-z0-9]+(-[a-z0-9]+)*/\\d{4}/[0-9a-f]{16}\\.csv$"}, "sha256": {"$ref": "#/$defs/sha256"}}}
+    m4["required"] = list(m4.get("required", [])) + ["rules"]
+    m4["properties"]["rules"] = {"type": "object", "additionalProperties": False, "required": ["registry", "holidays", "notice", "registry_versions"],
+                                 "properties": {"registry": {"$ref": "#/$defs/regRef"}, "holidays": {"$ref": "#/$defs/holRef"}, "notice": {"$ref": "#/$defs/noticeRef"},
+                                                "registry_versions": {"type": "array", "items": {"$ref": "#/$defs/regRef"}}}}
+    summ = defs.get("seriesSummary") or {}
+    summ["required"] = list(summ.get("required", [])) + ["deadline", "stale_at", "revision_csvs"]
+    props = summ.setdefault("properties", {})
+    props["deadline"] = {"anyOf": [{"$ref": "#/$defs/time"}, {"type": "null"}]}
+    props["stale_at"] = {"anyOf": [{"$ref": "#/$defs/time"}, {"type": "null"}]}
+    props["revision_csvs"] = {"type": "array", "items": {"$ref": "#/$defs/revCsvRef"}}
+    time = {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"}
+    sha = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    count = {"type": "integer", "minimum": 0}
+    dataset = {"type": "object", "additionalProperties": False, "required": ["snapshot", "manifest_sha256"],
+               "properties": {"snapshot": {"type": "string", "pattern": "^\\d{8}T\\d{6}Z$"}, "manifest_sha256": sha}}
+    entry = {"type": "object", "additionalProperties": False,
+             "required": ["number", "published_at", "run", "trigger", "dataset", "release", "site_commit", "artifact", "previous", "verification"],
+             "properties": {
+                 "number": {"type": "integer", "minimum": 1}, "published_at": time,
+                 "run": {"type": "string", "pattern": "^pub-[A-Za-z0-9._-]{1,80}-\\d+$"},
+                 "trigger": {"enum": ["manual", "timer", "redeploy"]}, "dataset": {"$ref": "#/$defs/dataset"},
+                 "release": {"type": "string", "pattern": "^data-\\d{8}T\\d{6}Z-[A-Za-z0-9._-]{1,80}-\\d+$"},
+                 "site_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+                 "artifact": {"type": "object", "additionalProperties": False, "required": ["files", "bytes", "sha256"],
+                              "properties": {"files": count, "bytes": count, "sha256": sha}},
+                 "previous": {"anyOf": [{"$ref": "#/$defs/dataset"}, {"type": "null"}]},
+                 "verification": {"type": "object", "additionalProperties": False, "required": ["checker", "post"],
+                                  "properties": {"checker": {"type": "object", "additionalProperties": False, "required": ["pass", "fail", "skip"],
+                                                             "properties": {"pass": count, "fail": count, "skip": count}},
+                                                 "post": {"enum": ["passed", "failed", "not-deployed", None]}}}}}
+    dep = {"$id": DEPLOYMENTS_ID, "title": "deployments/1 built by the checker from section 22.4 (v0.8): no schema file exists",
+           "type": "object", "additionalProperties": False, "required": ["schema", "deployments"],
+           "properties": {"schema": {"const": DEPLOYMENTS_ID}, "deployments": {"type": "array", "items": {"$ref": "#/$defs/entry"}}},
+           "$defs": {"dataset": dataset, "entry": entry}}
+    st.v08_schemas = {"manifest-v4": m4, "deployments": dep}
+    return st.v08_schemas
+
+
+def manifest_schema_for(st, doc):
+    """The manifest shape a manifest names: manifest/4 (built from the text) or the manifest/3 file."""
+    if isinstance(doc, dict) and doc.get("schema") == MANIFEST_V4:
+        return (getattr(st, "v08_schemas", None) or build_v08_shapes(st))["manifest-v4"]
+    return st.schemas["manifest"]
+
+
+def v08_expect_deadlines(st, snapshot):
+    """9 (v0.8, D7): per series (deadline, stale_at) as UTC texts or None: the 14.2 deadline of the
+    next unseen period and the time its staleness rule makes it stale, measured from that deadline
+    (21.4); a series that follows another takes that series' stale_at and has no deadline; both
+    null when not yet published. reading: a held or frozen series has its deadline too (21.4)."""
+    states = (snapshot or {}).get("series") or {}
+    raw = {}
+
+    def compute(sid, depth=0):
+        if sid in raw:
+            return raw[sid]
+        ser, state = st.series[sid], states.get(sid) or {}
+        if state.get("status") == "not-yet-published" or state.get("last_period") is None:
+            res = (None, None)
+        elif "follows" in ser["staleness"]:
+            other = ser["staleness"]["follows"]
+            res = (None, compute(other, depth + 1)[1] if depth < 3 and other in st.series else None)
+        else:
+            dl, _ = deadline_for(st, sid, state.get("last_period"), state.get("source_marker"))
+            res = (dl, stale_threshold(st, sid, dl) if dl is not None else None)
+        raw[sid] = res
+        return res
+
+    return {sid: tuple(fmt_utc(x) if x is not None else None for x in compute(sid)) for sid in st.series}
+
+
+REVISION_CSV_COLUMNS = ("detected_at", "snapshot", "period", "field", "before", "after", "kind", "basis", "release_date")  # 10 (v0.8, D17)
+
+
+def revision_csv_field(v):
+    """10: quoted with " (inner quotes doubled) when it holds a comma, a quote or a line feed; null is empty."""
+    if v is None:
+        return ""
+    s = v if isinstance(v, str) else canon_text(v)
+    if "," in s or '"' in s or "\n" in s:
+        return '"' + s.replace('"', '""') + '"'
+    return s
+
+
+def revision_csv_bytes(reg, ser, year, records):
+    """10 (v0.8): the CSV of one revision log version. Comment lines '<title> (<unit_label>): changes
+    we observed between our collections, <YYYY>', the attribution, the notice (if any), 'Terms:
+    <terms_url>'; then the header and one row per record in log order. {year} is the ET year of the
+    version's newest detected_at."""
+    src = reg["sources"][ser["source"]]
+    times = [r.get("detected_at") for r in records if isinstance(r, dict) and is_time(r.get("detected_at"))]
+    y = et_date(parse_utc(max(times))).year if times else year
+    lines = [f"# {ser['title']} ({ser['unit_label']}): changes we observed between our collections, {year}",
+             "# " + fill_placeholders(src["attribution"], ser["data_name"], y)]
+    if src.get("notice"):
+        lines.append("# " + fill_placeholders(src["notice"], ser["data_name"], y))
+    lines.append(f"# Terms: {src['terms_url']}")
+    lines.append(",".join(REVISION_CSV_COLUMNS))
+    for r in records:
+        lines.append(",".join(revision_csv_field((r or {}).get(c)) for c in REVISION_CSV_COLUMNS))
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def notice_file_bytes(reg, generated_at):
+    """22.9 (v0.8, I26): UTF-8, LF. The sources in byte order of their ids, a blank line after each;
+    for each source one line each for its publisher, its attribution, its notice if not null, its
+    license sentence and 'Terms: <terms_url>'. {year} is the ET year of generated_at; an
+    attribution or notice holding {data_name} is written once per series of the source, in
+    registry series order, with that series' data_name; otherwise once. After the last source's
+    blank line, the one CC0 statement line."""
+    year = et_date(parse_utc(generated_at)).year
+    names = {}
+    for s in reg.get("series", []):
+        if isinstance(s, dict):
+            names.setdefault(s.get("source"), []).append(s.get("data_name"))
+    lines = []
+    for src_id in sorted(reg["sources"], key=lambda x: x.encode("utf-8")):
+        src = reg["sources"][src_id]
+        lines.append(src["publisher"])
+        block = []
+        for field in ("attribution", "notice"):
+            text = src.get(field)
+            if text is None:
+                continue
+            filled = [fill_placeholders(text, dn, year) for dn in names.get(src_id, [])] if "{data_name}" in text else [fill_placeholders(text, "", year)]
+            for line in filled:
+                if line not in block:  # 22.9 (I43): a filled line identical to one already written for the same source is not repeated
+                    block.append(line)
+        lines += block
+        lines.append(src["license"])
+        lines.append(f"Terms: {src['terms_url']}")
+        lines.append("")
+    lines.append(NOTICE_STATEMENT)
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+D6_HEADERS = ("authorization", "cookie", "set-cookie", "x-api-key", "user-agent")  # 22.3 item 6
+D6_TOKENS = ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_")  # 22.3 item 8
+_W = "A-Za-z0-9_"  # 22.3: a word character
+_RX_D6 = {
+    "query-string": re.compile(r"[?&][A-Za-z0-9_.\[\]-]+=", re.ASCII),  # item 2
+    "url-with-path": re.compile(r"(?i:https?://)[^\s/]+/\S"),  # item 3
+    "email": re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", re.ASCII),  # item 4
+    "ipv4": re.compile(r"(?<![%s])\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?![%s])" % (_W, _W), re.ASCII),  # item 5
+    "header-name": re.compile(r"(?<![%s])(?i:%s)(?![%s])" % (_W, "|".join(re.escape(h) for h in D6_HEADERS), _W), re.ASCII),  # item 6
+    "bearer": re.compile(r"Bearer "),  # item 7
+    "token-shape": re.compile(r"(?<![%s])(?:%s)" % (_W, "|".join(re.escape(t) for t in D6_TOKENS)), re.ASCII),  # item 8
+}
+_RX_D6_SHA = re.compile(r"sha256:[0-9a-f]{64}")  # item 9
+_RX_D6_RUN = re.compile(r"[A-Za-z0-9+/=_-]{32,}", re.ASCII)  # item 9
+
+
+def d6_problems(text):
+    """22.3 (D6, PROVISIONAL) items 1 to 9, the reason check, which is also the alert check of 17.8.
+    Characters are Unicode code points; a word character is A-Z, a-z, 0-9 or _, and a whole word is
+    not preceded or followed by one. Returns the names of the items that refuse the text."""
+    if not isinstance(text, str):
+        return ["not-text"]
+    out = []
+    if text == "" or len(text) > 2000:
+        out.append("length")  # item 1
+    for name, rx in _RX_D6.items():
+        if rx.search(text):
+            out.append(name)
+    rest = _RX_D6_SHA.sub("sha256", text)
+    if any(re.search(r"[0-9]", m.group(0)) and re.search(r"[A-Za-z]", m.group(0)) for m in _RX_D6_RUN.finditer(rest)):
+        out.append("long-run")  # item 9
+    return out
+
+
+def deployment_log_problems(doc, where, private, st=None, archived_pairs=None):
+    """22.4 (v0.8): the rules of one deployment log: the private state/deployments.json when
+    `private`, else a release's status/deployments.json. Its shape (deployments/1 as built from the
+    text; canonical form is the caller's); numbers 1, 2, ...; published_at not decreasing (the
+    publication run's now; an automatic redeploy can share its starter's); run pub-<run id>-<attempt>
+    and release data-<snapshot>-<run id>-<attempt> for the entry's dataset; a release once;
+    previous the dataset of the entry before; the checker counts (V2b's, I47) have no FAIL; post passed, failed or not-deployed
+    once fixed, null only on the newest entry (a release's own, or in the private log while that
+    release's run has not completed, 22.4); a
+    redeploy's dataset and site commit those of an earlier entry with post passed (a verified pair,
+    D13); every dataset an archived manifest's pair when `archived_pairs` is given."""
+    p = []
+    if st is not None:
+        try:
+            p += [f"{where}: {e}" for e in schema_errors(doc, (getattr(st, "v08_schemas", None) or build_v08_shapes(st))["deployments"])[:4]]
+        except SchemaKeywordError as exc:
+            p.append(f"{where}: validator cannot evaluate: {exc}")
+    deps = doc.get("deployments") if isinstance(doc, dict) and isinstance(doc.get("deployments"), list) else []
+    if not private and not deps:
+        p.append(f"{where}: a release's log has at least its own entry (22.4)")
+    seen_tags = set()
+    for i, e in enumerate(deps):
+        if not isinstance(e, dict):
+            p.append(f"{where}: deployments[{i}] is not an object")
+            continue
+        w = f"{where}: entry {i + 1}"
+        if e.get("number") != i + 1:
+            p.append(f"{w}: number {e.get('number')!r}, the entries are numbered 1, 2, ... and numbers never repeat (22.4)")
+        prev = deps[i - 1] if i and isinstance(deps[i - 1], dict) else None
+        if prev is not None and is_time(prev.get("published_at")) and is_time(e.get("published_at")) and e["published_at"] < prev["published_at"]:
+            p.append(f"{w}: published_at {e['published_at']} is before the entry before ({prev['published_at']}); oldest first (22.4)")
+        want_prev = prev.get("dataset") if prev is not None else None
+        if e.get("previous") != want_prev:
+            p.append(f"{w}: previous {e.get('previous')}, the dataset of the entry before it is {want_prev} (22.4)")
+        ds = e.get("dataset") if isinstance(e.get("dataset"), dict) else {}
+        run, tag = e.get("run"), e.get("release")
+        mt_run = re.fullmatch(r"pub-(.+)-(\d+)", run) if isinstance(run, str) else None
+        if isinstance(tag, str) and mt_run and tag != f"data-{ds.get('snapshot')}-{mt_run.group(1)}-{mt_run.group(2)}":
+            p.append(f"{w}: release {tag} is not data-<snapshot>-<publish run id>-<attempt> for snapshot {ds.get('snapshot')} and run {run} (22.4, 22.6)")
+        if tag in seen_tags:
+            p.append(f"{w}: release {tag} appears twice (22.4: a release is never reused)")
+        seen_tags.add(tag)
+        ver = e.get("verification") if isinstance(e.get("verification"), dict) else {}
+        chk = ver.get("checker") if isinstance(ver.get("checker"), dict) else {}
+        if chk.get("fail") not in (0, None):
+            p.append(f"{w}: verification.checker.fail {chk.get('fail')}: the checker counts are V2b's, and a release is made only when V2 passes (22.4 I47, 22.5)")
+        post = ver.get("post")
+        last = i == len(deps) - 1
+        if post is None and not last:
+            p.append(f"{w}: post null on an earlier entry; a post once fixed is copied unchanged, null only on the newest entry (22.4)")
+        if post is not None and not private and last:
+            p.append(f"{w}: the release's own entry has post {post!r}; it is null in the release that adds it (22.4)")
+        if e.get("trigger") == "redeploy":
+            ok = any(isinstance(x, dict) and x.get("dataset") == e.get("dataset") and x.get("site_commit") == e.get("site_commit")
+                     and (x.get("verification") or {}).get("post") == "passed" for x in deps[:i])
+            if not ok:
+                p.append(f"{w}: a redeploy whose dataset and site commit are not those of an earlier entry with post passed (a verified pair, 22.4, D13)")
+        if archived_pairs is not None and ds and (ds.get("snapshot"), ds.get("manifest_sha256")) not in archived_pairs:
+            p.append(f"{w}: dataset {ds.get('snapshot')} {str(ds.get('manifest_sha256'))[:16]} is not the pair of any archived manifest (22.3: a publication copies an accepted dataset)")
+    return p
+
+
+def log_chain_problems(new_doc, prev_doc, where="the log"):
+    """22.4: the log in a new release equals the log of the newest earlier release with that
+    release's own last entry's post fixed (passed, failed or not-deployed), plus exactly one new
+    entry numbered one higher; the first release's log has one entry with previous null."""
+    new = new_doc.get("deployments") if isinstance(new_doc, dict) and isinstance(new_doc.get("deployments"), list) else []
+    if prev_doc is None:
+        return [] if len(new) == 1 else [f"{where} has {len(new)} entries but no earlier release is given: the first release's log has one entry, and a later one extends the newest earlier release's (22.4, 22.5 check 8)"]
+    old = prev_doc.get("deployments") if isinstance(prev_doc, dict) and isinstance(prev_doc.get("deployments"), list) else []
+    p = []
+    if len(new) != len(old) + 1:
+        return [f"{where} has {len(new)} entries; the newest earlier release's has {len(old)}, so it needs exactly {len(old) + 1} (22.4)"]
+    for i, (a, b) in enumerate(zip(old, new)):
+        if i < len(old) - 1:
+            if a != b:
+                p.append(f"{where}: entry {i + 1} differs from the earlier release's (a post once fixed is copied unchanged, 22.4)")
+            continue
+        a2 = json.loads(json.dumps(a))
+        b2 = json.loads(json.dumps(b))
+        bpost = ((b2.get("verification") or {}).get("post"))
+        if ((a2.get("verification") or {}).get("post")) is not None:
+            p.append(f"{where}: the earlier release's own entry {i + 1} has post set; a release adds its entry with post null (22.4)")
+        if bpost not in ("passed", "failed", "not-deployed"):
+            p.append(f"{where}: entry {i + 1}, the earlier release's own, has post {bpost!r}; it is fixed to passed, failed or not-deployed (22.4)")
+        for x in (a2, b2):
+            if isinstance(x.get("verification"), dict):
+                x["verification"]["post"] = None
+        if a2 != b2:
+            p.append(f"{where}: entry {i + 1} differs from the earlier release's own entry in more than its post (22.4)")
+    return p
+
+
+def rx_reg_copy_name(sha):
+    return f"registry/econ-{sha[:16]}.json"
+
+
+def rc_v08(ctx):
+    """T119 to T125 (v0.8)."""
+    rv, st = ctx.rv, ctx.st
+    vers = registry_versions(st)
+    by_hash = registry_by_hash(st)
+    boundary = rx_v08_from(ctx)
+    live_m = ctx.manifest if isinstance(ctx.manifest, dict) else {}
+    manifests = [(f"archive/manifests/{n}", m) for n, m, err in ctx.arch_manifests if not err and isinstance(m, dict)]
+    live_is_v4 = live_m.get("schema") == MANIFEST_V4
+
+    # T119: the manifest version (22.9 'Files written under v0.7', I2, I22)
+    p, n3, n4, seen4 = [], 0, 0, None
+    for name, m in sorted(manifests, key=lambda x: str(x[1].get("generated_at"))) + ([("live/manifest.json", live_m)] if live_m else []):
+        sch, t = m.get("schema"), m.get("generated_at")
+        if sch == MANIFEST_V4:
+            n4 += 1
+            seen4 = seen4 or (name, t)
+        elif sch == SCHEMA_IDS["manifest"]:
+            n3 += 1
+            if seen4 is not None and str(t) > str(seen4[1]):
+                p.append(f"{name}: rmf.econ.manifest/3 generated at {t}, after the manifest/4 {seen4[0]} ({seen4[1]}): no manifest/3 is generated after a manifest/4 (22.9)")
+        else:
+            p.append(f"{name}: schema {sch!r} is neither rmf.econ.manifest/3 nor rmf.econ.manifest/4 (9)")
+    p += [f"live/status/{f}: status/ holds runs.json and publications.json only; status/deployments.json is added by a publication to the artifact alone (22.3)"
+          for f in sorted(x[7:] for x in rv.files(rv.live) if x.startswith("status/")) if f not in ("runs.json", "publications.json")]
+    check("T119 no manifest/3 is generated after a manifest/4 in the archive; every manifest is one or the other (9, 22.9, I2: a file's own version marks it); live/status/ holds runs.json and publications.json only (22.3)", p,
+          f"{n3} manifest/3, {n4} manifest/4")
+
+    v4 = [(n, m) for n, m in manifests if m.get("schema") == MANIFEST_V4]
+    live_name = ctx.arch_manifests[-1][0] if ctx.arch_manifests else None
+    # T120: deadline and stale_at (9, D7)
+    p, n = [], 0
+    for name, m in v4:
+        snap = ctx.snaps.get((m.get("snapshot") or {}).get("id"))
+        if snap is None:
+            continue  # T40 reports it
+        want = v08_expect_deadlines(st, snap)
+        for sid, summ in sorted((m.get("series") or {}).items()):
+            if sid not in st.series or not isinstance(summ, dict):
+                continue
+            n += 1
+            wd, ws = want[sid]
+            if summ.get("deadline") != wd:
+                p.append(f"{name} {sid}: deadline {summ.get('deadline')}, the 14.2 deadline of its next unseen period is {wd}")
+            if summ.get("stale_at") != ws:
+                p.append(f"{name} {sid}: stale_at {summ.get('stale_at')}, its staleness rule measured from that deadline gives {ws}")
+    check("T120 every manifest/4 series has deadline (the 14.2 deadline of its next unseen period) and stale_at (its staleness rule measured from that deadline; a series that follows another takes its stale_at), both null when not yet published (9, 21.4, D7)", p, f"{n} series entries in {len(v4)} manifest/4")
+
+    # T121: revision CSVs (10, 9)
+    p, n, csv_cache = [], 0, {}
+    for name, m in v4:
+        is_live = name == f"archive/manifests/{live_name}"
+        reg = (rx_registry_for(ctx, ((m.get("rules") or {}).get("registry") or {}).get("sha256")) or (None, None, st.registry))[2]
+        for sid, summ in sorted((m.get("series") or {}).items()):
+            if sid not in st.series or not isinstance(summ, dict):
+                continue
+            revs = summ.get("revisions") if isinstance(summ.get("revisions"), list) else []
+            csvs = summ.get("revision_csvs") if isinstance(summ.get("revision_csvs"), list) else None
+            if csvs is None:
+                p.append(f"{name} {sid}: no revision_csvs list (9 v0.8)")
+                continue
+            if len(csvs) != len(revs):
+                p.append(f"{name} {sid}: {len(csvs)} revision_csvs for {len(revs)} revisions entries (9: one per entry, in the same order)")
+            for r, c in zip(revs, csvs):
+                if not isinstance(r, dict) or not isinstance(c, dict):
+                    continue
+                n += 1
+                mr = RX_LOG_PATH.fullmatch(str(r.get("path")))
+                mc = RX_REVCSV_PATH.fullmatch(str(c.get("path")))
+                if not mc:
+                    p.append(f"{name} {sid}: revision CSV path {c.get('path')!r} is not revisions/<series>/<YYYY>/<16 hex>.csv (10)")
+                    continue
+                if mr and (mc.group(1), mc.group(2)) != (mr.group(1), mr.group(2)):
+                    p.append(f"{name} {sid}: {c.get('path')} is not beside its log version {r.get('path')} (10: same series and year)")
+                if mc.group(1) != sid:
+                    p.append(f"{name} {sid}: {c.get('path')} is under another series")
+                if not is_sha256(c.get("sha256")) or mc.group(3) != c["sha256"][:16]:
+                    p.append(f"{name} {sid}: {c.get('path')} is not named by the first 16 hex of its sha256 (9: every file the manifest names is content-addressed; reading: its own hash)")
+                key = (c.get("path"), c.get("sha256"), r.get("path"), reg.get("conventions"), is_live)
+                if key not in csv_cache:
+                    msg = None
+                    data = rv.read(rv.arch, c.get("path"))
+                    log, lerr = rv.load(rv.arch, r.get("path"))
+                    if data is None:
+                        msg = f"{c.get('path')} is not in archive/files/ (22.9: written into archive/files/ with every manifest)"
+                    elif sha256_hex(data) != c.get("sha256"):
+                        msg = f"archive/files/{c.get('path')} has sha256 {sha256_hex(data)[:16]}, the manifest says {str(c.get('sha256'))[:16]}" + hash_mismatch_note(data, c.get("sha256"))
+                    elif lerr or not isinstance(log, dict):
+                        msg = f"its log version {r.get('path')}: {lerr or 'not an object'}"
+                    else:
+                        want = revision_csv_bytes(reg, st.series[sid], int(mc.group(2)), [x for x in log.get("records", []) if isinstance(x, dict)])
+                        if data != want:
+                            msg = f"{c.get('path')} differs from the CSV of 10 built from {r.get('path')} and the registry at {first_line_difference(data, want)}"
+                    if msg is None and is_live:
+                        ld = rv.read(rv.live, c.get("path"))
+                        if ld != data:
+                            msg = f"live/{c.get('path')} is {'missing' if ld is None else 'not the archived bytes'} (the live manifest names it)"
+                    csv_cache[key] = msg
+                if csv_cache[key]:
+                    p.append(f"{name} {sid}: {csv_cache[key]}")
+    check("T121 every manifest/4 series lists revision_csvs, one per revisions entry in the same order, each at revisions/<series>/<YYYY>/<16 hex>.csv beside its log version, content-addressed, in archive/files/ (and live/ for the live manifest), its bytes the CSV of 10: the title line with the year, attribution, notice, terms, the header and one row per record, quoted fields, {year} from the newest detected_at (9, 10 v0.8, D17; reading: revision_csvs is a per-series field like revisions)", p,
+          f"{n} revision CSV(s)")
+
+    # T122: the rule files (22.9) and registry_versions
+    p, n = [], 0
+    hol_bytes = canon_bytes(st.holiday_doc) if getattr(st, "holiday_doc", None) is not None else None
+    for name, m in v4:
+        is_live = name == f"archive/manifests/{live_name}"
+        rules = m.get("rules") if isinstance(m.get("rules"), dict) else {}
+        snap = ctx.snaps.get((m.get("snapshot") or {}).get("id")) or {}
+        refs = []
+        for key, rx in (("registry", RX_REGCOPY_PATH), ("holidays", RX_HOLCOPY_PATH), ("notice", RX_NOTICE_PATH)):
+            r = rules.get(key)
+            if not isinstance(r, dict):
+                p.append(f"{name}: rules.{key} missing (9 v0.8)")
+                continue
+            refs.append((key, r, rx))
+        for i, r in enumerate(rules.get("registry_versions") if isinstance(rules.get("registry_versions"), list) else []):
+            refs.append((f"registry_versions[{i}]", r, RX_REGCOPY_PATH))
+        if not isinstance(rules.get("registry_versions"), list):
+            p.append(f"{name}: rules.registry_versions is not a list (9 v0.8; reading: present, empty when no older registry version is in the window)")
+        for key, r, rx in refs:
+            n += 1
+            path, sha = r.get("path"), r.get("sha256")
+            mt = rx.fullmatch(str(path))
+            if not mt or not is_sha256(sha) or mt.group(1) != sha[:16]:
+                p.append(f"{name}: rules.{key} {path!r} is not its content address for sha256 {str(sha)[:16]} (9, 22.9)")
+                continue
+            data = rv.read(rv.arch, path)
+            if data is None:
+                p.append(f"{name}: rules.{key} {path} is not in archive/files/ (22.9)")
+                continue
+            if sha256_hex(data) != sha:
+                p.append(f"{name}: archive/files/{path} has sha256 {sha256_hex(data)[:16]}, rules.{key} says {sha[:16]}" + hash_mismatch_note(data, sha))
+                continue
+            if is_live and rv.read(rv.live, path) != data:
+                p.append(f"{name}: live/{path} is missing or differs (the live manifest names it, 22.9)")
+            if key.startswith("registry"):
+                _, cprob = registry_copy_problems(st, data, sha)
+                if cprob:
+                    p.append(f"{name}: {path} is not a valid canonical registry: {cprob[0]} (22.9: checked against the registry schema)")
+                found = rx_registry_for(ctx, sha)
+                if found is None:
+                    p.append(f"{name}: rules.{key} {path} ({sha[:16]}) is found neither as the current registry, an archived copy of a v0.8 run, nor by the I7 derivation (22.9, I44: refused)")
+                elif data != found[1]:
+                    p.append(f"{name}: {path} is not the canonical JSON of registry version {found[0]} (22.9)")
+            elif key == "holidays":
+                if is_live and hol_bytes is not None and data != hol_bytes:
+                    p.append(f"{name}: {path} is not the canonical JSON of the holiday table in use (pipeline/registry/fed-holidays.json, 22.9)")
+            elif key == "notice":
+                own = rx_registry_for(ctx, (rules.get("registry") or {}).get("sha256"))
+                reg = own[2] if own else st.registry
+                if is_time(m.get("generated_at")):
+                    want = notice_file_bytes(reg, m["generated_at"])
+                    if data != want:
+                        p.append(f"{name}: {path} differs from the notice file of 22.9 at {first_line_difference(data, want)}")
+        own_sha = (rules.get("registry") or {}).get("sha256")
+        if m.get("rollback") is None and (snap.get("run") or {}).get("registry_sha256") not in (None, own_sha):
+            p.append(f"{name}: rules.registry {str(own_sha)[:16]} is not the registry its own snapshot was built with ({str((snap.get('run') or {}).get('registry_sha256'))[:16]}) (22.9: this manifest's own registry)")
+        if is_live and hol_bytes is not None and (rules.get("holidays") or {}).get("sha256") != sha256_hex(hol_bytes):
+            p.append(f"{name}: rules.holidays does not name the holiday table in use (sha256 {sha256_hex(hol_bytes)[:16]})")
+        if is_live:
+            snaps_w, _ = rx_window(ctx)
+            want = sorted({(ctx.snaps.get(s) or {}).get("run", {}).get("registry_sha256") for s in snaps_w if s in ctx.snaps} - {own_sha, None})
+            got = [r.get("sha256") for r in (rules.get("registry_versions") or []) if isinstance(r, dict)]
+            want_refs = sorted((rx_reg_copy_name(h), h) for h in want)
+            got_refs = [(r.get("path"), r.get("sha256")) for r in (rules.get("registry_versions") or []) if isinstance(r, dict)]
+            if got_refs != want_refs:
+                p.append(f"{name}: rules.registry_versions names {[x[:16] for x in got]}; the older registry versions named by the window's snapshots are {[x[:16] for x in want]}, in path order (9, 22.9)")
+    check("T122 every manifest/4 names its rule files in rules: registry/econ-<16 hex>.json (the canonical JSON of the registry of the run that wrote it; for a manifest that is not a rollback, the one its snapshot records), registry/holidays-<16 hex>.json (the holiday table in use), notices/<16 hex>.txt (the notice file of 22.9: sources in byte order of their ids, each publisher, attribution, notice, license, Terms: and a blank line, per-series lines for {data_name}, then the CC0 statement), and in registry_versions every older registry version a window snapshot names, each the current registry with the substitutions of I7; all content-addressed, in archive/files/ and in live/ for the live manifest (9, 22.9, I7)", p,
+          f"{n} rule file reference(s) in {len(v4)} manifest/4")
+
+    # T123: NOTICE.txt (22.9)
+    p = []
+    nt = rv.read(rv.live, "NOTICE.txt")
+    if rv.read(rv.arch, "NOTICE.txt") is not None:
+        p.append("archive/files/NOTICE.txt exists; NOTICE.txt is live only (22.9)")
+    if live_is_v4:
+        ref = (live_m.get("rules") or {}).get("notice") or {}
+        named = rv.read(rv.live, ref.get("path")) if isinstance(ref.get("path"), str) else None
+        if nt is None:
+            p.append("live/NOTICE.txt is missing (22.9: a convenience copy of the notice file at the root)")
+        elif named is not None and nt != named:
+            p.append(f"live/NOTICE.txt differs from the named notice {ref.get('path')} at {first_line_difference(nt, named)}")
+    elif nt is not None:
+        p.append("live/NOTICE.txt exists although the live manifest is not rmf.econ.manifest/4 (a v0.7 run writes no rule files)")
+    check("T123 live/NOTICE.txt equals the notice file the live manifest/4 names, is not archived and is not named by the manifest (22.9)", p,
+          "live manifest is manifest/4" if live_is_v4 else "live manifest is manifest/3: no NOTICE.txt")
+
+    # T124: the reasons of operations from the first v0.8 run on (21.6, D6)
+    p, n_new, n_old_bad = [], 0, 0
+    q, _ = rv.load(rv.state, "review-queue.json")
+    pins, _ = rv.load(rv.state, "pins.json")
+    texts = []
+    cur_h, v07_h = vers["current"][0], vers["v0.7"][0]
+    v08_snap = lambda sid_: cur_h != v07_h and ((ctx.snaps.get(sid_) or {}).get("run") or {}).get("registry_sha256") == cur_h  # noqa: E731
+    v4_at = {m.get("generated_at") for _, m in manifests if m.get("schema") == MANIFEST_V4}
+    for d in (q.get("decisions") if isinstance(q, dict) and isinstance(q.get("decisions"), list) else []):
+        if isinstance(d, dict) and d.get("decision") in ("approve", "reject", "clear"):
+            texts.append((v08_snap((d.get("publication") or {}).get("snapshot")), f"review decision {d.get('decision')} of {d.get('series')} at {d.get('decided_at')}", d.get("reason")))
+    for f in rv.files(rv.rollbacks):
+        rec, err = rv.load(rv.rollbacks, f)
+        if not err and isinstance(rec, dict):
+            texts.append((rec.get("at") in v4_at, f"rollback record {f}", rec.get("reason")))
+    if isinstance(pins, dict):
+        for x in pins.get("pins") or []:
+            if isinstance(x, dict):
+                texts.append((True, f"pin of {x.get('snapshot')}", x.get("reason")))
+        for x in pins.get("unpinned") or []:
+            if isinstance(x, dict):
+                texts.append((True, f"unpin of {x.get('snapshot')}", x.get("reason")))
+    for is_v08, label, text in texts:
+        bad = d6_problems(text)
+        if is_v08:
+            n_new += 1
+            if bad:
+                p.append(f"{label}: the reason fails {', '.join(bad)} (21.6: refused before any write, so it is never accepted)")
+        elif bad:
+            n_old_bad += 1
+    check("T124 every reason of an operation run by v0.8 code passes the reason check of 22.3: a review whose snapshot records the v0.8 registry, a rollback whose manifest is manifest/4, and every pin and unpin (21.6, 22.9; PROVISIONAL)", p,
+          f"{n_new} reason(s) of v0.8 operations" + (f"; {n_old_bad} earlier reason(s) would fail it and would refuse a publication while in the window (22.5 check 6)" if n_old_bad else ""))
+
+    # T125: the v0.8 alert keys (17.8)
+    p = []
+    doc, err = rv.load(rv.state, "alerts.json")
+    opens = doc.get("open") if not err and isinstance(doc, dict) and isinstance(doc.get("open"), list) else []
+    for a in opens:
+        if not isinstance(a, dict):
+            continue
+        k, sev = a.get("key"), a.get("severity")
+        if k in ("publication-behind", "publication-facts-unavailable") and sev != "warning":
+            p.append(f"{k} has severity {sev!r}; 17.8 gives a warning")
+        head = str(k).split(":", 1)[0]
+        if k in NOT_COLLECTION_KEYS and (k in ("publish-failed", "publication-verify-failed", "publication-history-changed") or rx_v08_from(ctx) is not None):
+            p.append(f"alerts.json lists {k}; its owner is {NOT_COLLECTION_KEYS[k]}, and it never enters the collection ledger (21.5, 22.6 table)")
+        if head in ("series-stale", "series-held") and rx_v08_from(ctx) is not None:
+            p.append(f"alerts.json lists {k}; from v0.8 the self-check gives only the run keys, and series-stale and series-held are not delivered (17.8 layer 2)")
+    for rec in rx_records_in_time(ctx):
+        if not rx_v08(ctx, rec.get("started_at")):
+            continue  # reading: a v0.7 run's self-check could list the 14.3 manifest findings
+        for k in rec.get("alerts") or []:
+            if k in NOT_COLLECTION_KEYS or str(k).split(":", 1)[0] in ("series-stale", "series-held"):
+                p.append(f"run record {rec.get('id')} lists {k}, which a v0.8 collection run never raises (17.8 layer 2, 21.5, 22.6 table)")
+    check("T125 the alert keys and their owners (22.6 table, 17.8 layer 2): publication-behind and publication-facts-unavailable are warnings of the collection run; publish-failed and publication-verify-failed (publish.yml report) and publication-history-changed never enter the collection ledger; from v0.8 neither do manifest-missing and manifest-overdue (the watcher's) nor series-stale and series-held (not delivered), in the ledger or a v0.8 run record (reading: v0.8 from the first manifest/4 or v0.8 snapshot)", p,
+          f"{len(opens)} open alert(s)")
 
 
 SCENARIO_CHECKS = ("T84", "T103", "T104", "T114")  # the checks that follow the table of appendix B (21.3: not in live mode)
@@ -8959,6 +9810,7 @@ def section_root(st, root, live=False, rv=None, legacy_until=None, legacy_ff=Non
         for label, fn in (("T72 to T73 runs", rc_runs), ("T69 review queue", rc_review_queue), ("T70 to T71 alerts", rc_alerts), ("T95 refusals", rc_refusals),
                           ("T98 to T99 absences", rc_absences), ("T100 due groups", rc_due), ("T101 route alerts", rc_route_alerts),
                           ("T116 full fetches", rc_full_fetches), ("T117 line endings", rc_line_endings), ("T118 alert keys of v0.7", rc_alert_keys_v07),
+                          ("T119 to T125 v0.8", rc_v08),
                           ("T84 appendix B", rc_scenario), ("T103 to T104 appendix B in v0.4", rc_scenario_v04), ("T114 appendix B in v0.5", rc_scenario_v05)):
             if not (live and label.startswith(SCENARIO_CHECKS)):
                 guarded(label, fn, ctx)
@@ -8976,6 +9828,7 @@ def section_root(st, root, live=False, rv=None, legacy_until=None, legacy_ff=Non
                       ("T100 due groups", rc_due), ("T101 route alerts", rc_route_alerts), ("T102, T112 windowed candidates", rc_windowed),
                       ("T108 clear", rc_clear), ("T109 locks in the review queue", rc_queue_locks), ("T113 missing versus zero", rc_zero),
                       ("T116 full fetches", rc_full_fetches), ("T117 line endings", rc_line_endings), ("T118 alert keys of v0.7", rc_alert_keys_v07),
+                      ("T119 to T125 v0.8", rc_v08),
                       ("T84 appendix B", rc_scenario), ("T103 to T104 appendix B in v0.4", rc_scenario_v04), ("T114 appendix B in v0.5", rc_scenario_v05)):
         if not (live and label.startswith(SCENARIO_CHECKS)):
             guarded(label, fn, ctx)
@@ -9007,15 +9860,20 @@ def load_helper(file_name, module_name):
     return mod
 
 
-USAGE = ("usage: python -I tests/datacheck/check_p22.py [--root <dir> [--live]]\n"
-         "       python -I tests/datacheck/check_p22.py --state <store dir>\n"
+USAGE = ("usage: python -I tests/datacheck/check_p22.py [--registry <file>] [--root <dir> [--live]]\n"
+         "       python -I tests/datacheck/check_p22.py [--registry <file>] --state <store dir>\n"
          "       python -I tests/datacheck/check_p22.py --state-scenario <dir>\n"
+         "       python -I tests/datacheck/check_p22.py [--registry <file>] --publication <econ dir or artifact.tar.gz> --state <store dir> [--previous-release <release dir>]\n"
+         "       python -I tests/datacheck/check_p22.py [--registry <file>] --release <release dir> [--expect <snapshot>:<sha256>] [--previous-release <release dir>]\n"
+         "       python -I tests/datacheck/check_p22.py [--registry <file>] --release-history <folder of release folders> [--deployed <deployed status/deployments.json>]\n"
+         "       python -I tests/datacheck/check_p22.py [--registry <file>] --publication-scenario <dir>\n"
          "       python -I tests/datacheck/check_p22.py --compare-saved <collection dir> [--compare-out <file.json>]")
 
 
 def run_plain_sections(st, live):
     """The plain checks: all of them, or in the live modes only those the root checks rest on."""
     guarded("holiday table", load_holiday_table, st)
+    guarded("v0.8 self-tests", lambda: load_helper("check_publication.py", "rmf_check_publication").section_selftests_v08(sys.modules[__name__], st))
     guarded("canonical JSON", section_canonical, st)
     guarded("schemas", section_schemas, st)
     if not live:
@@ -9030,8 +9888,44 @@ def run_plain_sections(st, live):
 
 
 def main(argv=None):
-    global LIVE_MODE
-    argv = sys.argv[1:] if argv is None else argv
+    global LIVE_MODE, REGISTRY
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["--registry"] and len(argv) >= 2:
+        # Self-tests only: another registry file (with fed-holidays.json beside it), for example the
+        # committed one with the v0.8 substitutions of 22.9 applied, before the pipeline commits it.
+        REGISTRY = Path(argv[1]).resolve()
+        argv = argv[2:]
+        print(f"check_p22.py: registry {REGISTRY} (given with --registry, not the committed one)")
+    pub = {}
+    for flag in ("--publication", "--release", "--release-history", "--publication-scenario"):
+        if argv[:1] == [flag] and len(argv) >= 2:
+            pub = {"mode": flag, "target": argv[1]}
+            rest, opts = argv[2:], {}
+            while len(rest) >= 2 and rest[0] in ("--state", "--expect", "--previous-release", "--deployed") and rest[0] not in opts:
+                opts[rest[0]] = rest[1]
+                rest = rest[2:]
+            allowed = {"--publication": {"--state", "--previous-release"}, "--release": {"--expect", "--previous-release"}, "--release-history": {"--deployed"}}.get(flag, set())
+            if rest or set(opts) - allowed or (flag == "--publication" and "--state" not in opts):
+                print(USAGE)
+                return 2
+            pub.update(state=opts.get("--state"), expect=opts.get("--expect"), previous=opts.get("--previous-release"), deployed=opts.get("--deployed"))
+            break
+    if pub:
+        LIVE_MODE = True
+        print(f"check_p22.py: independent checker for DATA_CONVENTIONS {CONVENTIONS}, {pub['mode'][2:]} mode (repository {ROOT})")
+        st = load_state()
+        run_plain_sections(st, True)
+        cp = load_helper("check_publication.py", "rmf_check_publication")
+        if pub["mode"] == "--publication":
+            guarded("publication", cp.run_publication, sys.modules[__name__], st, pub["target"], pub["state"], pub["previous"])
+        elif pub["mode"] == "--release":
+            guarded("release", cp.run_release, sys.modules[__name__], st, pub["target"], pub["expect"], pub["previous"])
+        elif pub["mode"] == "--release-history":
+            guarded("release history", cp.run_release_history, sys.modules[__name__], st, pub["target"], pub["deployed"])
+        else:
+            guarded("publication scenario", cp.run_pub_scenario, sys.modules[__name__], st, pub["target"])
+        print(f"SUMMARY {COUNTS['PASS']} PASS, {COUNTS['FAIL']} FAIL, {COUNTS['SKIP']} SKIP")
+        return 1 if COUNTS["FAIL"] else 0
     if "--compare-saved" in argv:
         opts, rest = {}, list(argv)
         while rest:

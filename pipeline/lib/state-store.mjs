@@ -22,7 +22,7 @@ const schemaNamed = (name) => JSON.parse(readFileSync(join(SCHEMA_DIR, `${name}.
 /** The schema a state file must satisfy (20.3), or null for a file without one (collector.json). */
 function stateSchema(path) {
   const rel = path.slice(STATE_DIR.length + 1);
-  const named = { 'alerts.json': 'alerts', 'pins.json': 'pins', 'publications.json': 'publications', 'review-queue.json': 'review-queue' }[rel];
+  const named = { 'alerts.json': 'alerts', 'deployments.json': 'deployments', 'pins.json': 'pins', 'publications.json': 'publications', 'review-queue.json': 'review-queue' }[rel];
   if (named) return schemaNamed(named);
   if (rel.startsWith('run-records/')) {
     const runs = schemaNamed('runs');

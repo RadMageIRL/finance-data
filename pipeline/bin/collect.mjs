@@ -24,6 +24,7 @@ import { commitAndPush, exportState, exportStateV2, importState, importStateV2, 
 import { canonicalJson } from '../lib/canonical.mjs';
 import { freshnessAt } from '../lib/freshness.mjs';
 import { makeCalendar } from '../lib/calendar.mjs';
+import { emptyLog, fixPost, privateLogCopy, publicationBehind } from '../lib/publication.mjs';
 
 const PIPELINE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (name) => {
@@ -173,7 +174,7 @@ export function writeStore({ root, state, run, record, bodies, push, message, cl
  * empty, Stage B or unpromoted store. Validation by the independent checker comes before any
  * write; any failure before the push leaves the store as it was.
  */
-export async function collectStageC({ root, state, run, trigger = 'schedule', push = false, env = process.env, transportRequest = undefined, clock = nowIso, wait = sleep, healthFacts = null, factsUnavailable = false, validate = validateRoot, validateStore = null, transportClock = () => new Date(), inputs = loadInputs() }) {
+export async function collectStageC({ root, state, run, trigger = 'schedule', push = false, env = process.env, transportRequest = undefined, clock = nowIso, wait = sleep, healthFacts = null, factsUnavailable = false, publicationFacts = null, publicationFactsUnavailable = false, validate = validateRoot, validateStore = null, transportClock = () => new Date(), inputs = loadInputs() }) {
   const layout = storeLayout(state);
   if (layout !== 'v0.7') throw new Error(`state store refused: Stage C needs a promoted v0.7 store, found ${layout}`);
   const verified = verifyStateV2(state);
@@ -186,6 +187,21 @@ export async function collectStageC({ root, state, run, trigger = 'schedule', pu
   if (budget) extraAlerts.push(budget);
   if (factsUnavailable) extraAlerts.push({ key: 'self-check-unavailable', severity: 'warning', title: 'Schedule self-check unavailable', body: 'The facts for the schedule self-check could not be read from the GitHub API in this run; the run continued without them.' });
   const accepted = JSON.parse(readFileSync(join(root, 'live', 'manifest.json'), 'utf8'));
+  // v0.8 (22.4): the private deployment log, the collection run's copy of the newest release's
+  // log; kept as it was, with a warning, when the facts cannot be read.
+  const logFile = join(root, 'archive', 'state', 'deployments.json');
+  const previousLog = existsSync(logFile) ? JSON.parse(readFileSync(logFile, 'utf8')) : null;
+  let privateLog;
+  if (publicationFactsUnavailable || !publicationFacts) {
+    privateLog = previousLog ?? emptyLog();
+    if (publicationFactsUnavailable) extraAlerts.push({ key: 'publication-facts-unavailable', severity: 'warning', title: 'Publication facts unavailable', body: 'The releases and publication runs could not be read from the GitHub API in this run; the private deployment log was kept as it was.' });
+  } else privateLog = privateLogCopy(publicationFacts.newestLog ?? null, publicationFacts.newestLog ? fixPost(publicationFacts.newestRun ?? null) : null);
+  writeFileSync(logFile, canonicalJson(privateLog));
+  // v0.8 (17.8, PROPOSED): publication-behind, only while timer publication is enabled.
+  if (env.PUBLICATION_SCHEDULE_ENABLED === 'true') {
+    const behind = publicationBehind({ log: privateLog, accepted: { snapshot: accepted.snapshot.id, manifest_sha256: createHash('sha256').update(readFileSync(join(root, 'live', 'manifest.json'))).digest('hex') }, publications: JSON.parse(readFileSync(join(root, 'archive', 'state', 'publications.json'), 'utf8')), now });
+    if (behind) extraAlerts.push(behind);
+  }
   const recorded = [];
   const record = (e) => recorded.push(e);
   const transport = makeLiveTransport({ registry: inputs.registry, record, ...(transportRequest ? { request: transportRequest } : {}), clock: transportClock });
@@ -204,7 +220,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const mode = arg('--mode');
   const root = arg('--root');
   if (!['fixture', 'live'].includes(mode) || !root) {
-    console.error('usage: node pipeline/bin/collect.mjs --mode fixture --root <dir>\n       node pipeline/bin/collect.mjs --mode live --root <dir> --state <dir> --run <id> --trigger schedule|manual [--facts <file> | --facts-unavailable] [--summary <file>] [--push]');
+    console.error('usage: node pipeline/bin/collect.mjs --mode fixture --root <dir>\n       node pipeline/bin/collect.mjs --mode live --root <dir> --state <dir> --run <id> --trigger schedule|manual [--facts <file> | --facts-unavailable] [--publication-facts <file> | --publication-facts-unavailable] [--summary <file>] [--push]');
     process.exit(2);
   }
   try {
@@ -215,7 +231,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     }
     // Live mode is Stage C only: a promoted v0.7 store (the Stage B run is done).
     const factsFile = arg('--facts');
-    const r = await collectStageC({ root, state: arg('--state'), run: arg('--run'), trigger: arg('--trigger') ?? 'manual', push: process.argv.includes('--push'), healthFacts: factsFile ? JSON.parse(readFileSync(factsFile, 'utf8')) : null, factsUnavailable: process.argv.includes('--facts-unavailable'), validateStore: (s) => runChecker(['--state', s]) });
+    // v0.8 (22.4): the publication facts for the private deployment log, or their absence.
+    const pubFile = arg('--publication-facts');
+    const r = await collectStageC({ root, state: arg('--state'), run: arg('--run'), trigger: arg('--trigger') ?? 'manual', push: process.argv.includes('--push'), healthFacts: factsFile ? JSON.parse(readFileSync(factsFile, 'utf8')) : null, factsUnavailable: process.argv.includes('--facts-unavailable'), publicationFacts: pubFile ? JSON.parse(readFileSync(pubFile, 'utf8')) : null, publicationFactsUnavailable: process.argv.includes('--publication-facts-unavailable'), validateStore: (s) => runChecker(['--state', s]) });
     if (arg('--summary')) writeFileSync(arg('--summary'), JSON.stringify(r));
     console.log(JSON.stringify({ ...r, ledger: r.ledger.map((a) => a.key), plan: r.plan.map((p) => `${p.action} ${p.key}`) }));
     process.exit(r.outcome === 'failed' || r.outcome === 'gate-failed' ? 1 : 0);

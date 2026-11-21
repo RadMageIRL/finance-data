@@ -1,6 +1,6 @@
 {
   "schema": "rmf.econ.registry/4",
-  "conventions": "v0.7",
+  "conventions": "v0.8",
   "family": "econ",
   "holiday_table": "fed-holidays.json",
   "family_policy": {
@@ -21,8 +21,8 @@
     "nyfed-markets": {
       "publisher": "Federal Reserve Bank of New York",
       "host": "markets.newyorkfed.org",
-      "terms_url": "https://www.newyorkfed.org/termsofuse",
-      "terms_checked": "2026-11-16",
+      "terms_url": "https://www.newyorkfed.org/privacy/termsofuse",
+      "terms_checked": "2026-11-20",
       "license": "The New York Fed grants you a non-exclusive license, subject to the Terms, to use, copy, and distribute Content for your personal or business purposes.",
       "commercial_use": "allowed-with-conditions",
       "attribution": "© {year} Federal Reserve Bank of New York. Content from the New York Fed subject to the Terms of Use at newyorkfed.org.",
@@ -42,7 +42,7 @@
       "publisher": "U.S. Department of the Treasury, Bureau of the Fiscal Service",
       "host": "api.fiscaldata.treasury.gov",
       "terms_url": "https://fiscaldata.treasury.gov/api-documentation/",
-      "terms_checked": "2026-11-16",
+      "terms_checked": "2026-11-20",
       "license": "The data is offered free, without restriction, and available to copy, adapt, redistribute, or otherwise use for non-commercial or commercial purposes.",
       "commercial_use": "allowed",
       "attribution": "Source: U.S. Department of the Treasury, Bureau of the Fiscal Service, Debt to the Penny.",
@@ -62,7 +62,7 @@
       "publisher": "Board of Governors of the Federal Reserve System",
       "host": "www.federalreserve.gov",
       "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
-      "terms_checked": "2026-11-16",
+      "terms_checked": "2026-11-20",
       "license": "Unless otherwise indicated, information on Board's website is in the public domain and may be copied and distributed without permission. Please cite to the Board as the source of the information.",
       "commercial_use": "allowed",
       "attribution": "Source: Board of Governors of the Federal Reserve System, H.6 Money Stock Measures.",

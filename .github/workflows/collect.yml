@@ -150,6 +150,17 @@ jobs:
           else
             echo "args=--facts-unavailable" >> "$GITHUB_OUTPUT"
           fi
+      - name: Publication facts for the private deployment log (v0.8, 22.4)
+        id: pubfacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SITE_REPOSITORY: RadMageIRL/finance
+        run: |
+          if node pipeline/bin/publication-facts.mjs --out "$RUNNER_TEMP/publication-facts.json"; then
+            echo "args=--publication-facts $RUNNER_TEMP/publication-facts.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=--publication-facts-unavailable" >> "$GITHUB_OUTPUT"
+          fi
       - name: Collect, validate with the independent checker, then write the state store without force
         id: collect
         env:
@@ -157,6 +168,8 @@ jobs:
           EVENT: ${{ github.event_name }}
           MODE: ${{ inputs.mode }}
           FACTS: ${{ steps.facts.outputs.args }}
+          PUBFACTS: ${{ steps.pubfacts.outputs.args }}
+          PUBLICATION_SCHEDULE_ENABLED: ${{ vars.PUBLICATION_SCHEDULE_ENABLED }}
           RUN_ID: ${{ github.run_id }}
           ATTEMPT: ${{ github.run_attempt }}
         run: |
@@ -164,7 +177,7 @@ jobs:
           echo "stage=collection" >> "$GITHUB_OUTPUT"
           set +e
           # shellcheck disable=SC2086
-          node pipeline/bin/collect.mjs --mode live --root "$RUNNER_TEMP/root" --state state-store --run "$run" --trigger "$trigger" $FACTS --summary "$RUNNER_TEMP/summary.json" --push
+          node pipeline/bin/collect.mjs --mode live --root "$RUNNER_TEMP/root" --state state-store --run "$run" --trigger "$trigger" $FACTS $PUBFACTS --summary "$RUNNER_TEMP/summary.json" --push
           code=$?
           set -e
           if [ -f "$RUNNER_TEMP/summary.json" ]; then

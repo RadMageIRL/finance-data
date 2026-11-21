@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "rmf.econ.manifest/3",
-  "title": "The one mutable pointer to the current snapshot, written last (DATA_CONVENTIONS section 9)",
+  "$id": "rmf.econ.manifest/4",
+  "title": "The one mutable pointer to the current snapshot, written last (DATA_CONVENTIONS section 9, v0.8 manifest/4)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,11 +12,12 @@
     "rollback",
     "series",
     "health",
-    "pages_window"
+    "pages_window",
+    "rules"
   ],
   "properties": {
     "schema": {
-      "const": "rmf.econ.manifest/3"
+      "const": "rmf.econ.manifest/4"
     },
     "generated_at": {
       "$ref": "#/$defs/time"
@@ -142,6 +143,33 @@
           }
         }
       }
+    },
+    "rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registry",
+        "holidays",
+        "notice",
+        "registry_versions"
+      ],
+      "properties": {
+        "registry": {
+          "$ref": "#/$defs/ruleRef"
+        },
+        "holidays": {
+          "$ref": "#/$defs/ruleRef"
+        },
+        "notice": {
+          "$ref": "#/$defs/ruleRef"
+        },
+        "registry_versions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ruleRef"
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -194,7 +222,10 @@
         "status",
         "status_reason",
         "attribution",
-        "notice"
+        "notice",
+        "revision_csvs",
+        "deadline",
+        "stale_at"
       ],
       "properties": {
         "title": {
@@ -360,6 +391,32 @@
               }
             }
           ]
+        },
+        "revision_csvs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/revisionCsvRef"
+          }
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stale_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -386,6 +443,40 @@
         },
         "retrieved_at": {
           "$ref": "#/$defs/time"
+        }
+      }
+    },
+    "revisionCsvRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^revisions/[a-z0-9-]+/\\d{4}/[0-9a-f]{16}\\.csv$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "ruleRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(registry/(econ|holidays)-[0-9a-f]{16}\\.json|notices/[0-9a-f]{16}\\.txt)$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
         }
       }
     }

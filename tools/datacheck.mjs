@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:f
 import { join } from 'node:path';
 import { runScenario } from '../pipeline/bin/fixture-scenario.mjs';
 import { runStateScenario } from '../pipeline/bin/state-scenario.mjs';
+import { runPublishScenario } from '../pipeline/bin/publish-scenario.mjs';
 
 const OPEN = {};
 
@@ -130,6 +131,24 @@ if (sc.stderr) process.stdout.write(sc.stderr);
 console.log(`data check: state scenario check ${scCount ? `${scCount[1]} passed, ${scCount[2]} failed, ${scCount[3]} skipped` : 'reported nothing'}`);
 if (!(sc.status === 0 && scCount && scCount[2] === '0' && Number(scCount[1]) > 0)) process.exit(1);
 
+// The publication scenario (appendix J, v0.8), twice: the same bytes, releases included; then the
+// independent checker's appendix J mode on it.
+const pubDir = join('local', 'data-out', 'publish-check');
+const pubTwin = join('local', 'data-out', 'publish-check-twin');
+for (const d of [pubDir, pubTwin]) rmSync(d, { recursive: true, force: true });
+const j = await runPublishScenario(pubDir);
+await runPublishScenario(pubTwin);
+const pubSame = treeHash(pubDir) === treeHash(pubTwin);
+console.log(`data check: publication scenario wrote ${pubDir} (${j.steps.length} steps: ${j.steps.map((s) => s.outcome).join(', ')}); a second run wrote ${pubSame ? 'the same bytes' : 'DIFFERENT bytes'}`);
+if (!pubSame) process.exit(1);
+rmSync(pubTwin, { recursive: true, force: true });
+const pc = spawnSync(run.python, ['-I', join('tests', 'datacheck', 'check_p22.py'), '--publication-scenario', pubDir], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const pcCount = /^SUMMARY (\d+) PASS, (\d+) FAIL, (\d+) SKIP$/m.exec(pc.stdout ?? '');
+for (const line of `${pc.stdout ?? ''}`.split(/\r?\n/)) if (line.startsWith('FAIL')) console.log(line);
+if (pc.stderr) process.stdout.write(pc.stderr);
+console.log(`data check: publication scenario check ${pcCount ? `${pcCount[1]} passed, ${pcCount[2]} failed, ${pcCount[3]} skipped` : 'reported nothing'}`);
+if (!(pc.status === 0 && pcCount && pcCount[2] === '0' && Number(pcCount[1]) > 0)) process.exit(1);
+
 // The checker's own self-test of the state and scenario modes, where its local evidence exists
 // (it builds on the saved copy of the real Stage B store, which only the Finance checkout has).
 const evidence = join('local', 'research', 'p26', 'live', 'state-store');
@@ -144,4 +163,19 @@ const stCount = /^SELFTEST (\d+) PASS, (\d+) FAIL/m.exec(st.stdout ?? '');
 for (const line of `${st.stdout ?? ''}`.split(/\r?\n/)) if (line.startsWith('FAIL')) console.log(line);
 if (st.stderr) process.stdout.write(st.stderr);
 console.log(`data check: state self-test ${stCount ? `${stCount[1]} passed, ${stCount[2]} failed` : 'reported nothing'}`);
-process.exit(st.status === 0 && stCount && stCount[2] === '0' && Number(stCount[1]) > 0 ? 0 : 1);
+if (!(st.status === 0 && stCount && stCount[2] === '0' && Number(stCount[1]) > 0)) process.exit(1);
+
+// The checker's publication self-test (v0.8), on the saved copy of the accepted store where it exists.
+const pubEvidence = join('local', 'research', 'p27', 'observe', 'state');
+if (!existsSync(pubEvidence)) {
+  console.log('data check: publication self-test not run here (the saved accepted store is local evidence)');
+  process.exit(0);
+}
+const ptOut = join('local', 'data-out', 'publication-selftest');
+rmSync(ptOut, { recursive: true, force: true });
+const pt = spawnSync(run.python, ['-I', join('tests', 'datacheck', 'publication_selftest.py'), ptOut], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const ptCount = /^SUMMARY (\d+) PASS, (\d+) FAIL/m.exec(pt.stdout ?? '');
+for (const line of `${pt.stdout ?? ''}`.split(/\r?\n/)) if (line.startsWith('FAIL')) console.log(line);
+if (pt.stderr) process.stdout.write(pt.stderr);
+console.log(`data check: publication self-test ${ptCount ? `${ptCount[1]} passed, ${ptCount[2]} failed` : 'reported nothing'}`);
+process.exit(pt.status === 0 && ptCount && ptCount[2] === '0' && Number(ptCount[1]) > 0 ? 0 : 1);

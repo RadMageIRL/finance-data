@@ -1,4 +1,4 @@
-"""State store mode and appendix G scenario mode of the independent checker (DATA_CONVENTIONS v0.7).
+"""State store mode and appendix G scenario mode of the independent checker (DATA_CONVENTIONS v0.8).
 
     python -I tests/datacheck/check_p22.py --state <store dir>
     python -I tests/datacheck/check_p22.py --state-scenario <dir>
@@ -11,7 +11,8 @@ nothing is written.
 
 Two layouts (20.3, 21.2), told apart by state/STATE.json:
   rmf.econ.state/1  the Stage B layout of 20.1 and 20.3: state/ and unpublished/<run id>/ (checks SB1 to SB9)
-  rmf.econ.state/2  the v0.7 layout of 21.2 after the baseline promotion (checks ST1 to ST19)
+  rmf.econ.state/2  the v0.7 layout of 21.2 after the baseline promotion (checks ST1 to ST20; v0.8 adds
+                    state/deployments.json, the private deployment log of 22.4, checked by ST20)
 In both, the root is then verified by the live root mode of 21.3 (the T checks, appendix B excluded).
 The scenario mode (checks G0 to G12) reads <dir>/steps.json and <dir>/store against appendix G and
 then runs the state mode on the store.
@@ -32,6 +33,7 @@ RX_REVIEW_NAME = re.compile(r"[a-z0-9-]+/[0-9a-f]{16}-[a-z]+-(\d{8}T\d{6}Z)\.jso
 RX_ROLLBACK_NAME = re.compile(r"(\d{8}T\d{6}Z)\.json", re.ASCII)
 OUTCOMES_QUIET = ("nothing-due", "no-change", "gate-failed", "failed", "refused")  # nothing accepted (21.3); nothing under root/
 OP_TRIGGER = {"review": "review", "rollback": "rollback", "restore": "restore"}  # 21.4 operation to the run record's trigger (14.1)
+NO_RUN_RECORD_OPS = ("promote", "pin", "unpin")  # 21.4: no pipeline step, no run record (v0.8 I45 adds pin and unpin)
 
 
 class Store:
@@ -137,8 +139,14 @@ def _state_file_problems(ck, st, store, rel):
                 p.append(f"{rel}: the record's id is {v.get('id')!r}")
     elif name == "accepted.json":
         p += [f"{rel}: {e}" for e in _schema(ck, st, "accepted", v)[:4]]
+    elif name == "deployments.json":
+        # 21.2, 22.4 (v0.8): the private deployment log, rmf.econ.deployments/1 (shape built from the text)
+        try:
+            p += [f"{rel}: {e}" for e in ck.schema_errors(v, st.v08_schemas["deployments"])[:4]]
+        except ck.SchemaKeywordError as exc:
+            p.append(f"{rel}: validator cannot evaluate: {exc}")
     elif name != "collector.json":
-        p.append(f"{rel}: not a state file of 17.1 (review-queue, publications, pins, alerts, collector, run-records/<run id>.json) nor accepted.json")
+        p.append(f"{rel}: not a state file of 17.1 (review-queue, publications, pins, alerts, collector, run-records/<run id>.json), nor accepted.json, nor deployments.json (v0.8)")
     return p
 
 
@@ -603,7 +611,7 @@ def run_v07(ck, st, store, desc):
     for f in STATE_FIXED:
         if f"state/{f}" not in fileset:
             p.append(f"state/{f} missing (17.1)")
-    check("ST6 each state file validates: accepted.json against rmf.econ.accepted/1, alerts/1, pins/1, publications/1, review-queue/4, each run record against the run item of runs/2; every one canonical JSON (17.1, 20.3, 21.2)", p,
+    check("ST6 each state file validates: accepted.json against rmf.econ.accepted/1, alerts/1, pins/1, publications/1, review-queue/4, each run record against the run item of runs/2, deployments.json against deployments/1 (v0.8, built from 22.4); every one canonical JSON (17.1, 20.3, 21.2)", p,
           f"{len(actual)} files")
 
     # Collection records (needed from here on)
@@ -716,6 +724,18 @@ def run_v07(ck, st, store, desc):
             p.append(f"{f}: a {op} with outcome {v.get('outcome')} (17.2: published)")
         if op == "review" and v.get("outcome") not in ("published", "refused"):
             p.append(f"{f}: a review with outcome {v.get('outcome')} (17.5: published or refused)")
+        if op in ("pin", "unpin"):
+            # 21.4, 21.6 (v0.8, I45): outcome no-change; they change pins.json only, as 17.6 records them
+            if v.get("outcome") != "no-change":
+                p.append(f"{f}: a {op} with outcome {v.get('outcome')} (21.4: no-change)")
+            pins_doc, _ = store.load(ck, "state/pins.json")
+            pins_doc = pins_doc if isinstance(pins_doc, dict) else {}
+            t = v.get("started_at")
+            if op == "pin" and not (any(isinstance(x, dict) and x.get("pinned_at") == t for x in pins_doc.get("pins") or [])
+                                    or any(isinstance(x, dict) and str(x.get("unpinned_at")) > str(t) for x in pins_doc.get("unpinned") or [])):
+                p.append(f"{f}: a pin at {t}, but pins.json has no pin made then (nor a later unpin) (17.6, 21.6)")
+            if op == "unpin" and not any(isinstance(x, dict) and x.get("unpinned_at") == t for x in pins_doc.get("unpinned") or []):
+                p.append(f"{f}: an unpin at {t}, but pins.json unpinned records none then (17.6, 21.6)")
         if op is None and v.get("outcome") in ("refused", "promoted"):
             p.append(f"{f}: a collection with outcome {v.get('outcome')}")
         if ck.is_time(v.get("started_at")) and ck.is_time(v.get("ended_at")) and v["ended_at"] < v["started_at"]:
@@ -798,9 +818,9 @@ def run_v07(ck, st, store, desc):
         op = v.get("operation")
         rid = v.get("run")
         rec = run_recs.get(rid)
-        if op == "promote":
+        if op in NO_RUN_RECORD_OPS:
             if rec is not None:
-                p.append(f"{f}: the promotion has a run record state/run-records/{rid}.json (reading: it is not a pipeline run)")
+                p.append(f"{f}: the {op} operation has a run record state/run-records/{rid}.json (21.4: it runs no pipeline step and has none)")
             continue
         if rec is None:
             p.append(f"{f}: no run record state/run-records/{rid}.json (21.3: the store keeps the run's run record)")
@@ -1011,6 +1031,29 @@ def run_v07(ck, st, store, desc):
                 last_ok = v["started_at"]
     check("ST18 a scheduled run that read the self-check facts raises scheduled-run-gap when more than 9 hours passed since the store's previous successful scheduled run, and not when fewer did (one hour of margin for queueing; a successful scheduled run always writes the store, 21.3) (14.3)", p,
           f"{n18} scheduled run(s) compared")
+
+    # ST20 (v0.8): the private deployment log state/deployments.json (21.2, 22.4)
+    p = []
+    raw = store.read("state/deployments.json")
+    live_v4 = isinstance(man, dict) and man.get("schema") == ck.MANIFEST_V4
+    if raw is None:
+        if live_v4:
+            p.append("state/deployments.json is missing although the accepted manifest is manifest/4 (reading: a v0.8 collection run writes it at every run, 22.4)")
+        note = "absent: every write so far is a v0.7 run (reading: required once the accepted manifest is manifest/4)"
+    else:
+        dep, derr = store.load(ck, "state/deployments.json")
+        if derr:
+            p.append(f"state/deployments.json: {derr}")
+        else:
+            pairs = set()
+            for f in store.under("root/archive/manifests/"):
+                data = store.read(f)
+                mv, merr2 = store.load(ck, f)
+                if not merr2 and isinstance(mv, dict):
+                    pairs.add(((mv.get("snapshot") or {}).get("id"), ck.sha256_hex(data)))
+            p += ck.deployment_log_problems(dep, "state/deployments.json", True, st, archived_pairs=pairs)
+        note = f"{len((dep or {}).get('deployments') or []) if not derr else 0} entr(y/ies)"
+    check("ST20 state/deployments.json (v0.8), when present: rmf.econ.deployments/1, canonical, numbered 1, 2, ..., previous the dataset before, each release data-<snapshot>-<run id>-<attempt> once, post set from the verify job, a redeploy only of a verified pair, every dataset an archived manifest's pair; written by the collection run (21.2, 22.4)", p, note)
 
     # ST19: root/ in live mode (21.2, 21.3)
     print("check_state.py: root/ with state/ (accepted.json included, STATE.json left out) as its archive/state/: the working root of 21.3, in live mode")

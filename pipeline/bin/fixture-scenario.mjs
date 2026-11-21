@@ -17,7 +17,7 @@ import { zipRead, zipWrite } from '../lib/zip.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..');
 const json = (rel) => JSON.parse(readFileSync(join(HERE, rel), 'utf8'));
-export const SCHEMA_NAMES = ['registry', 'manifest', 'snapshot', 'object', 'revisions', 'runs', 'publications'];
+export const SCHEMA_NAMES = ['registry', 'manifest', 'snapshot', 'object', 'revisions', 'runs', 'publications', 'holidays', 'deployments'];
 
 /** A registry whose series begin where a slice of history begins (tests on small data only). */
 export function sliceRegistry(registry, starts) {

@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: promote, review, rollback or restore
+        description: promote, review, rollback, restore, pin or unpin (v0.8, 21.6)
         type: choice
-        options: [review, rollback, restore, promote]
+        options: [review, rollback, restore, promote, pin, unpin]
       series:
         description: review - the series id
         type: string
@@ -32,6 +32,14 @@ on:
         default: ''
       manifest_sha256:
         description: promote - the reviewed manifest SHA-256
+        type: string
+        default: ''
+      snapshot:
+        description: pin or unpin - the snapshot id
+        type: string
+        default: ''
+      site_release:
+        description: pin - the site release that renders the snapshot
         type: string
         default: ''
       reason:
@@ -119,11 +127,13 @@ jobs:
           TO: ${{ inputs.to }}
           MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
           REASON: ${{ inputs.reason }}
+          SNAPSHOT: ${{ inputs.snapshot }}
+          SITE_RELEASE: ${{ inputs.site_release }}
           RUN_ID: ${{ github.run_id }}
           ATTEMPT: ${{ github.run_attempt }}
         run: |
           node pipeline/bin/state-op.mjs --op "$OPERATION" --state state-store --root "$RUNNER_TEMP/root" --run "op-${RUN_ID}-${ATTEMPT}" \
-            --series "$SERIES" --candidate "$CANDIDATE" --decision "$DECISION" --to "$TO" --manifest-sha256 "$MANIFEST_SHA256" --reason "$REASON" \
+            --series "$SERIES" --candidate "$CANDIDATE" --decision "$DECISION" --to "$TO" --manifest-sha256 "$MANIFEST_SHA256" --reason "$REASON" --snapshot "$SNAPSHOT" --site-release "$SITE_RELEASE" \
             --summary "$RUNNER_TEMP/summary.json" --push
           echo "wrote=true" >> "$GITHUB_OUTPUT"
           echo "ledger=$(node -e "const s=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));process.stdout.write(Buffer.from(JSON.stringify({ledger:s.ledger})).toString('base64'))" "$RUNNER_TEMP/summary.json")" >> "$GITHUB_OUTPUT"

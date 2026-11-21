@@ -5,7 +5,8 @@ import { canonicalJson, sha256Hex } from './canonical.mjs';
 import { validate } from './json-schema.mjs';
 import { registryProblems } from './registry-policy.mjs';
 import { diffObservations, keyOf } from './classify.mjs';
-import { csvSegments, lastSummary } from './tree.mjs';
+import { csvSegments, deadlines, lastSummary, registryHash, revisionCsv } from './tree.mjs';
+import { holidayCopy, noticeText, registryVersionOf } from './rules.mjs';
 
 /** Hard limits in bytes, decimal units (decision P2, section 17.7). */
 export const HARD_LIMITS = { object: 2_000_000, file: 5_000_000, manifest: 256_000, published: 250_000_000, archiveMonth: 50_000_000 };
@@ -20,6 +21,9 @@ function schemaFor(path, schemas) {
   if (path.startsWith('objects/')) return schemas.object;
   if (path.startsWith('snapshots/')) return schemas.snapshot;
   if (path.startsWith('revisions/')) return schemas.revisions;
+  // v0.8 (22.9): the registry and holiday copies.
+  if (path.startsWith('registry/econ-')) return schemas.registry;
+  if (path.startsWith('registry/holidays-')) return schemas.holidays;
   return null;
 }
 
@@ -32,7 +36,9 @@ function schemaFor(path, schemas) {
  *   holdText(hold) -> text | null,        a held candidate's bytes (staged or archived)
  *   previous: { snapshot, manifest } | null,   the published state before this run
  *   measured: { publishedBytes, archiveMonthBytes },
- *   limits (optional)
+ *   limits (optional),
+ *   v0.8: calendar, holidays (the table in use), windowRegistryHashes (the registry hashes the
+ *   window's snapshots name)
  * }
  */
 export function gateProblems(view) {
@@ -129,6 +135,27 @@ export function gateProblems(view) {
       closure(r, `manifest ${s.id}`, false);
       if (!r.path.startsWith(`revisions/${s.id}/`)) add(3, `${r.path} is not a revision log of ${s.id}`);
     }
+    // v0.8 (10, D17): one revision CSV per log version, in the same order, exactly as 10 builds it.
+    const csvRefs = ms.revision_csvs ?? [];
+    if (csvRefs.length !== ms.revisions.length) add(9, `${s.id}: ${ms.revisions.length} revision log version(s) but ${csvRefs.length} revision CSV(s)`);
+    ms.revisions.forEach((r, i) => {
+      const logText = get(r.path);
+      const ref = csvRefs[i];
+      if (logText === null || !ref) return;
+      const want = revisionCsv(s, registry.sources[s.source], logText);
+      if (ref.path !== want.path || ref.sha256 !== want.sha256) add(9, `${s.id}: revision CSV ${ref.path} is not the one section 10 builds from ${r.path}`);
+      else closure(ref, `manifest ${s.id}`, false);
+    });
+    // v0.8 (9, D7): the deadline of the next unseen period and the staleness time.
+    if (view.calendar) {
+      const timesOf = (x) => (snapshot.series[x.id].status === 'not-yet-published' ? null : deadlines(x, snapshot.series[x.id], registry, view.calendar));
+      const own = st.status === 'not-yet-published' ? null : timesOf(s);
+      const followedSeries = s.staleness.follows !== undefined ? registry.series.find((x) => x.id === s.staleness.follows) : null;
+      const followed = followedSeries ? timesOf(followedSeries) : own;
+      const wantDeadline = own?.deadline ?? null;
+      const wantStale = st.status === 'not-yet-published' ? null : (followed?.staleAt ?? null);
+      if (ms.deadline !== wantDeadline || ms.stale_at !== wantStale) add(9, `${s.id}: deadline ${ms.deadline} and stale_at ${ms.stale_at}, expected ${wantDeadline} and ${wantStale}`);
+    }
     // 9. The manifest's summary equals the snapshot and objects.
     const obs = observationsOf(snapshot, s.id);
     if (JSON.stringify(ms.objects) !== JSON.stringify(st.objects.map((o) => ({ path: o.path, sha256: o.sha256 })))) add(9, `${s.id}: the manifest's objects differ from the snapshot's`);
@@ -172,9 +199,48 @@ export function gateProblems(view) {
   }
   for (const s of registry.series) if (snapshot.series[s.id].status === 'held' && !snapshot.holds.some((h) => h.series === s.id)) add(3, `${s.id} is held without a hold entry`);
 
+  // v0.8 (22.9, D8): the rule files the manifest names, and NOTICE.txt.
+  const rules = manifest.rules;
+  const ruleAddress = /(?:registry\/econ-|registry\/holidays-|notices\/)([0-9a-f]{16})\.(json|txt)$/;
+  const ruleText = (r, what) => {
+    const text = get(r.path);
+    if (text === null) {
+      add(3, `rules ${what}: ${r.path} missing`);
+      return null;
+    }
+    const hash = sha256Hex(text);
+    if (hash !== r.sha256) add(3, `rules ${what}: ${r.path} does not match its hash`);
+    const m = ruleAddress.exec(r.path);
+    if (!m || m[1] !== hash.slice(0, 16)) add(3, `rules ${what}: ${r.path} is not at its address`);
+    return text;
+  };
+  if (!rules) add(9, 'the manifest names no rule files (v0.8, 22.9)');
+  else {
+    if (ruleText(rules.registry, 'registry') !== null && (rules.registry.sha256 !== registryHash(registry) || !rules.registry.path.startsWith('registry/econ-'))) add(9, "rules.registry is not the copy of this run's registry");
+    if (ruleText(rules.holidays, 'holidays') !== null && view.holidays && rules.holidays.sha256 !== holidayCopy(view.holidays).sha256) add(9, 'rules.holidays is not the holiday table in use');
+    const notice = ruleText(rules.notice, 'notice');
+    if (notice !== null && notice !== noticeText(registry, manifest.generated_at)) add(9, 'the notice file is not the one 22.9 builds');
+    if (notice !== null && staged.get('NOTICE.txt') !== notice) add(9, 'NOTICE.txt does not equal the notice file the manifest names');
+    const versions = [];
+    for (const r of rules.registry_versions) {
+      const text = ruleText(r, 'registry version');
+      if (text === null) continue;
+      // An earlier version is an archived copy (written by an earlier v0.8 run) or one I7 derives (I44).
+      const v = registryVersionOf(registry, r.sha256);
+      const archived = view.archived(r.path);
+      if (v ? v.text !== text : archived !== text) add(9, `rules: ${r.path} is neither archived nor a registry version of appendix I row I7`);
+      else for (const e of validate(schemas.registry, JSON.parse(text))) add(8, `${r.path} ${e}`);
+      versions.push(r.sha256);
+    }
+    if (view.windowRegistryHashes) {
+      const want = [...new Set(view.windowRegistryHashes)].filter((h) => h !== registryHash(registry)).sort();
+      if (JSON.stringify([...versions].sort()) !== JSON.stringify(want)) add(9, 'rules.registry_versions does not list exactly the other registry versions the window names');
+    }
+  }
+
   // 4. Immutability against the archive as it stood.
   for (const [path, text] of staged) {
-    if (path === 'manifest.json' || path.startsWith('status/')) continue;
+    if (path === 'manifest.json' || path === 'NOTICE.txt' || path.startsWith('status/')) continue;
     const old = view.archived(path);
     if (old !== null && old !== text) add(4, `${path} exists in the archive with different bytes`);
   }

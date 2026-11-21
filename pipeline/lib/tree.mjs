@@ -87,6 +87,35 @@ export function revisionLog(seriesId, year, previousRecords, newRecords) {
   return { path: `revisions/${seriesId}/${year}/${sha256.slice(0, 16)}.json`, sha256, bytes: bytes(text), text };
 }
 
+/** A CSV field (10, v0.8): quoted when it holds a comma, a quote or a line feed; null is empty. */
+const csvField = (v) => {
+  if (v === null || v === undefined) return '';
+  const t = String(v);
+  return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+};
+
+/**
+ * The CSV of a revision log version (10, v0.8, D17), exact to the byte, at
+ * `revisions/<series>/<YYYY>/<16 hex of its own SHA-256>.csv`. `logText` is the version's
+ * canonical JSON; `{year}` is the ET year of its newest `detected_at`.
+ */
+export function revisionCsv(series, source, logText) {
+  const log = JSON.parse(logText);
+  const newest = log.records.reduce((a, r) => (r.detected_at > a ? r.detected_at : a), log.records[0]?.detected_at ?? '');
+  const values = { year: newest ? etDate(newest).slice(0, 4) : String(log.year), data_name: series.data_name };
+  const lines = [
+    `# ${series.title} (${series.unit_label}): changes we observed between our collections, ${log.year}`,
+    `# ${fill(source.attribution, values)}`,
+    ...(source.notice ? [`# ${fill(source.notice, values)}`] : []),
+    `# Terms: ${source.terms_url}`,
+    'detected_at,snapshot,period,field,before,after,kind,basis,release_date',
+    ...log.records.map((r) => [r.detected_at, r.snapshot, r.period, r.field, r.before, r.after, r.kind, r.basis, r.release_date].map(csvField).join(',')),
+  ];
+  const text = `${lines.join('\n')}\n`;
+  const sha256 = sha256Hex(text);
+  return { path: `revisions/${series.id}/${log.year}/${sha256.slice(0, 16)}.csv`, sha256, bytes: bytes(text), text };
+}
+
 /** The readings of a calendar's publication zone (4.5): one zone, or the candidates of an unknown one. */
 export const zoneReadings = (cal) => (cal.publish_time_zone === 'unknown' ? cal.publish_time_zone_candidates : [cal.publish_time_zone]);
 
@@ -147,9 +176,11 @@ export function lastSummary(series, observations) {
 }
 
 /**
- * The manifest (section 9). `parts[id]` = { observations, csvs: [refs with segment and retrieved_at], revisions: [refs] }.
+ * The manifest (section 9; v0.8 manifest/4). `parts[id]` = { observations, csvs: [refs with
+ * segment and retrieved_at], revisions: [refs], revisionCsvs: [refs] }; `rules` is the
+ * manifest's `rules` (22.9, rules.mjs).
  */
-export function buildManifest({ registry, snapshot, snapshotRef, parts, now, previousSnapshot, rollback, locks = null, pinned, calendar }) {
+export function buildManifest({ registry, snapshot, snapshotRef, parts, now, previousSnapshot, rollback, locks = null, pinned, calendar, rules }) {
   const series = {};
   const times = {};
   for (const s of registry.series) {
@@ -193,6 +224,10 @@ export function buildManifest({ registry, snapshot, snapshotRef, parts, now, pre
     } else status = 'fresh';
     if (times[s.id] && st.status !== 'held' && !frozen.has(s.id) && (earliest === null || times[s.id].deadline < earliest)) earliest = times[s.id].deadline;
     const values = { year: etDate(st.retrieved_at ?? now).slice(0, 4), data_name: s.data_name };
+    // v0.8 (9, D7): the deadline of the next unseen period and the staleness time; a series that
+    // follows another takes that series' staleness time; null when not yet published.
+    const own = st.status === 'not-yet-published' ? null : (times[s.id] ?? null);
+    const followed = s.staleness.follows !== undefined ? (times[s.staleness.follows] ?? null) : own;
     series[s.id] = {
       title: s.title,
       unit_label: s.unit_label,
@@ -201,6 +236,9 @@ export function buildManifest({ registry, snapshot, snapshotRef, parts, now, pre
       objects: st.objects.map((o) => ({ path: o.path, sha256: o.sha256 })),
       csvs: (p.csvs ?? []).map((c) => ({ segment: c.segment, path: c.path, sha256: c.sha256, retrieved_at: c.retrieved_at })),
       revisions: p.revisions.map((r) => ({ path: r.path, sha256: r.sha256 })),
+      revision_csvs: (p.revisionCsvs ?? []).map((r) => ({ path: r.path, sha256: r.sha256 })),
+      deadline: own?.deadline ?? null,
+      stale_at: st.status === 'not-yet-published' ? null : (followed?.staleAt ?? null),
       ...lastSummary(s, p.observations),
       retrieved_at: st.retrieved_at,
       checked_at: st.checked_at,
@@ -211,7 +249,7 @@ export function buildManifest({ registry, snapshot, snapshotRef, parts, now, pre
     };
   }
   const manifest = {
-    schema: 'rmf.econ.manifest/3',
+    schema: 'rmf.econ.manifest/4',
     generated_at: now,
     snapshot: { id: snapshot.id, path: snapshotRef.path, sha256: snapshotRef.sha256 },
     previous_snapshot: previousSnapshot,
@@ -220,6 +258,7 @@ export function buildManifest({ registry, snapshot, snapshotRef, parts, now, pre
     // With no published series that is not held, the manifest is due at once (17.3).
     health: { schedule: SCHEDULE, expected_next_update_by: earliest ?? now },
     pages_window: { days: PAGES_WINDOW_DAYS, pinned: [...pinned].sort() },
+    rules,
   };
   return { manifest, text: canonicalJson(manifest) };
 }

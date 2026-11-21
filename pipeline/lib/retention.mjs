@@ -76,7 +76,8 @@ export function liveWindow({ manifest, snapshots, manifests, pins, days = WINDOW
     if (isSignificant(s, i > 0 ? snapshots[ids[i - 1]] : null)) mark(id, 'significant');
     if (Date.parse(s.created_at ?? snapshotTime(id)) > cutoff) mark(id, 'window');
   });
-  const keep = new Set(['manifest.json', 'status/runs.json']);
+  // NOTICE.txt (v0.8, 22.9) is live only and always kept with the manifest that names its notice.
+  const keep = new Set(['manifest.json', 'status/runs.json', 'NOTICE.txt']);
   for (const id of Object.keys(kept)) for (const p of filesOfSnapshot(snapshots[id])) keep.add(p);
   // The files the manifests of kept snapshots named (CSVs, revision log versions).
   for (const m of [manifest, ...manifests]) {
@@ -84,8 +85,11 @@ export function liveWindow({ manifest, snapshots, manifests, pins, days = WINDOW
     for (const s of Object.values(m.series)) {
       for (const c of s.csvs ?? []) keep.add(c.path);
       for (const r of s.revisions) keep.add(r.path);
+      for (const r of s.revision_csvs ?? []) keep.add(r.path);
       for (const o of s.objects) keep.add(o.path);
     }
+    // v0.8 (17.6, 22.9): the rule files a kept snapshot's manifests named.
+    if (m.rules) for (const r of [m.rules.registry, m.rules.holidays, m.rules.notice, ...m.rules.registry_versions]) keep.add(r.path);
   }
   return { keep, kept };
 }

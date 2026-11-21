@@ -10,7 +10,11 @@ type Loose = Record<string, any>;
 import * as m1 from '../../../pipeline/lib/run-facts.mjs';
 const { TIMER_TITLE_PREFIX, isScheduledRun, runFacts } = m1 as unknown as Loose;
 import * as m2 from '../../../pipeline/bin/watch.mjs';
-const { FAILING_KEYS, RUN_KEYS, readFacts, watch, watchFails, watchFindings, watchPlan } = m2 as unknown as Loose;
+const { FAILING_KEYS, RUN_KEYS, WATCH_KEYS, readFacts, readPublicationFacts, watch, watchFails, watchFindings, watchPlan } = m2 as unknown as Loose;
+import * as m5 from '../../../pipeline/lib/publication.mjs';
+const { artifactSummary, nextLog, releaseAssets, releaseHistoryProblems, releaseTag } = m5 as unknown as Loose;
+import * as m6 from '../../../pipeline/lib/canonical.mjs';
+const { canonicalJson, sha256Hex } = m6 as unknown as Loose;
 import * as m3 from '../../../pipeline/timer/worker.mjs';
 const worker = m3 as unknown as Loose;
 const { CRON_LINES, dispatchSlot, retryable, slotOf, targetFor } = worker;
@@ -191,6 +195,9 @@ describe('the Cloudflare timer (21.3, 21.9)', () => {
     expect(targetFor('2026-11-20T16:17:00Z')).toEqual({ workflow: 'collect.yml', inputs: { mode: 'timer', slot: '2026-11-20T16:17:00Z' } });
     expect(targetFor('2026-11-20T14:47:00Z')).toEqual({ workflow: 'watch.yml', inputs: { slot: '2026-11-20T14:47:00Z' } });
     expect(() => targetFor('2026-11-20T16:18:00Z')).toThrow(/no workflow/);
+    // v0.8: minute 37 routes to timer publication; the cron line itself is not deployed (CRON_LINES).
+    expect(targetFor('2026-11-20T16:37:00Z')).toEqual({ workflow: 'publish.yml', inputs: { mode: 'timer' } });
+    expect(CRON_LINES.some((l: string) => l.startsWith('37 '))).toBe(false);
   });
 
   it('dispatches on main with exactly the inputs, the token as a bearer', async () => {
@@ -245,5 +252,100 @@ describe('the Cloudflare timer (21.3, 21.9)', () => {
       { url: 'https://api.github.com/repos/RadMageIRL/finance-data/actions/workflows/collect.yml/dispatches', body: { ref: 'main', inputs: { mode: 'timer', slot: '2026-11-20T20:17:00Z' } }, auth: 'Bearer sec' },
       { url: 'https://api.github.com/repos/RadMageIRL/finance-data/actions/workflows/watch.yml/dispatches', body: { ref: 'main', inputs: { slot: '2026-11-20T22:47:00Z' } }, auth: 'Bearer sec' },
     ]);
+  });
+});
+
+describe('v0.8: the watcher reads the public manifest and checks the release history (21.9, 22.7)', () => {
+  const S1 = '20261124T150000Z';
+  const S2 = '20261124T161700Z';
+  const tree = (id: string) => new Map<string, string>([['manifest.json', canonicalJson({ snapshot: { id } })], ['objects/effr/2026/0123456789abcdef.json', `{"id":"${id}"}`]]);
+  const entry = (snapshot: string, run: number) => ({ published_at: '2026-11-24T15:00:00Z', run: `pub-${run}-1`, trigger: 'manual', dataset: { snapshot, manifest_sha256: sha256Hex(tree(snapshot).get('manifest.json')) }, release: releaseTag(snapshot, run, 1), site_commit: '0'.repeat(40), artifact: artifactSummary(tree(snapshot)), checker: { pass: 1, fail: 0, skip: 0 } });
+  const build = () => {
+    const log1 = nextLog(null, null, entry(S1, 1));
+    const log2 = nextLog(log1, 'passed', entry(S2, 2));
+    const a2 = releaseAssets(new Map([...tree(S2), ['status/deployments.json', canonicalJson(log2)]]));
+    const names = ['SHA256SUMS', 'artifact.tar.gz', 'deployments.json', 'manifest.json'];
+    return {
+      releases: [{ tag: releaseTag(S1, 1, 1), assetNames: names, log: log1 }, { tag: releaseTag(S2, 2, 1), assetNames: names, log: log2 }],
+      newest: { tag: releaseTag(S2, 2, 1), assets: a2 },
+      deployedLog: log2,
+      manifest: { health: { expected_next_update_by: '2026-11-25T15:00:00Z' }, series: {} },
+    };
+  };
+
+  it('finds no problem in an intact history, and each kind of change', () => {
+    expect(releaseHistoryProblems(build())).toEqual([]);
+    const deleted = build();
+    deleted.releases.shift();
+    expect(releaseHistoryProblems(deleted)).toContain(`release ${releaseTag(S1, 1, 1)} of entry 1 does not exist`);
+    const extra = build();
+    extra.releases.push({ tag: 'data-20261125T000000Z-9-1', assetNames: [], log: { deployments: [] } });
+    expect(releaseHistoryProblems(extra)).toContain('release data-20261125T000000Z-9-1 is not named by the newest log');
+    const rewritten = build();
+    rewritten.releases[0]!.log = structuredClone(rewritten.releases[0]!.log);
+    rewritten.releases[0]!.log.deployments[0].published_at = '2026-11-24T15:01:00Z';
+    expect(releaseHistoryProblems(rewritten)).toContain(`the log of ${releaseTag(S1, 1, 1)} is not the newest log up to its own entry`);
+    const sums = build();
+    sums.newest.assets = { ...sums.newest.assets, 'manifest.json': Buffer.from('x') };
+    expect(releaseHistoryProblems(sums)).toContain(`the SHA256SUMS of ${releaseTag(S2, 2, 1)} does not match its assets`);
+    // The newest release deleted: only the deployed log shows it (I34).
+    const gone = build();
+    gone.releases.pop();
+    gone.newest = { tag: releaseTag(S1, 1, 1), assets: releaseAssets(new Map([...tree(S1), ['status/deployments.json', canonicalJson(gone.releases[0]!.log)]])) };
+    const p = releaseHistoryProblems(gone);
+    expect(p).toContain(`the deployed log names ${releaseTag(S2, 2, 1)}, which does not exist`);
+    expect(p).toContain('the deployed log reaches entry 2, beyond the newest release');
+  });
+
+  it('adds the manifest keys and the history key only once a data release exists, and fails on them', () => {
+    const base = { now: '2026-11-25T03:00:00Z', workflow: { state: 'active' }, repository: { pushed_at: '2026-11-24T15:00:00Z' }, runs: [{ event: 'schedule', conclusion: 'success', created_at: '2026-11-25T00:17:00Z' }] };
+    expect(watchFindings({ ...base, publication: null })).toEqual([]);
+    expect(watchFindings({ ...base, publication: build() })).toEqual([]);
+    const missing = watchFindings({ ...base, publication: { ...build(), manifest: null } });
+    expect(missing.map((f: Loose) => f.key)).toEqual(['manifest-missing']);
+    expect(watchFails(missing)).toBe(true);
+    const overdue = watchFindings({ ...base, now: '2026-11-25T18:00:00Z', publication: build() });
+    expect(overdue.map((f: Loose) => [f.key, f.severity])).toContainEqual(['manifest-overdue', 'warning']);
+    expect(watchFails(overdue.filter((f: Loose) => f.key === 'manifest-overdue'))).toBe(false);
+    const gone = build();
+    gone.releases.shift();
+    const changed = watchFindings({ ...base, publication: gone });
+    expect(changed.map((f: Loose) => [f.key, f.severity])).toEqual([['publication-history-changed', 'critical']]);
+    expect(watchFails(changed)).toBe(true);
+    expect(WATCH_KEYS).toEqual([...RUN_KEYS, 'manifest-missing', 'manifest-overdue', 'publication-history-changed']);
+    // The watcher's reconcile touches its own keys and no other.
+    const issue = (n: number, key: string) => ({ number: n, created_at: `2026-11-24T0${n}:00:00Z`, title: `x [${key}]`, body: `x\n\nrmf-alert-key: ${key}` });
+    const plan = watchPlan([issue(1, 'publish-failed'), issue(2, 'manifest-missing')], []);
+    expect(plan.map((a: Loose) => [a.action, a.key])).toEqual([['close', 'manifest-missing']]);
+  });
+
+  it('reads the releases, the newest release assets and the public files; nothing when no data release exists', async () => {
+    const b = build();
+    const seen: string[] = [];
+    const releasesJson = b.releases.map((r, i) => ({ tag_name: r.tag, draft: false, assets: r.assetNames.map((name, k) => ({ name, url: `https://api.github.com/assets/${i}-${k}` })) }));
+    const assetBytes = (i: number, name: string) => (i === 1 ? b.newest.assets[name] : Buffer.from(canonicalJson(b.releases[0]!.log)));
+    const fetchImpl = async (url: string) => {
+      seen.push(url);
+      if (url.includes('/releases?')) return { ok: true, status: 200, json: async () => [...releasesJson, { tag_name: 'v0.2.0', draft: false, assets: [] }] };
+      const m = /assets\/(\d)-(\d)$/.exec(url);
+      if (m) {
+        const i = Number(m[1]);
+        const name = b.releases[i]!.assetNames[Number(m[2])]!;
+        const bytes = assetBytes(i, name);
+        return { ok: true, status: 200, arrayBuffer: async () => bytes };
+      }
+      if (url.endsWith('manifest.json')) return { ok: true, status: 200, text: async () => JSON.stringify(b.manifest) };
+      if (url.endsWith('status/deployments.json')) return { ok: false, status: 404, text: async () => '' };
+      return { ok: false, status: 500 };
+    };
+    const facts = await readPublicationFacts({ token: 't', repository: 'RadMageIRL/finance-data', fetchImpl });
+    expect(facts.releases.map((r: Loose) => r.tag)).toEqual(b.releases.map((r) => r.tag));
+    expect(facts.newest.tag).toBe(releaseTag(S2, 2, 1));
+    expect(facts.deployedLog).toBeNull();
+    expect(releaseHistoryProblems(facts)).toEqual([]);
+    expect(seen.some((u) => u === 'https://radmagelabs.com/finance/data/econ/manifest.json')).toBe(true);
+    const none = await readPublicationFacts({ token: 't', repository: 'RadMageIRL/finance-data', fetchImpl: async () => ({ ok: true, status: 200, json: async () => [{ tag_name: 'v0.1.0', draft: false, assets: [] }] }) });
+    expect(none).toBeNull();
+    await expect(readPublicationFacts({ token: 't', repository: 'RadMageIRL/finance-data', fetchImpl: async () => ({ ok: false, status: 403 }) })).rejects.toThrow(/answered 403/);
   });
 });

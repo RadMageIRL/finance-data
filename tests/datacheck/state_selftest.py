@@ -545,15 +545,14 @@ STAGE_B_FAULTS = [
 
 
 def legacy_hash_selftest():
-    """The legacy reading of T46: with the committed registry's conventions set to v0.7 in memory
-    (as the pipeline update will commit it), the Stage B snapshot's registry_sha256 is the hash of
-    that registry with conventions v0.6, and not its v0.7 hash."""
+    """The legacy reading of T46 (21.1, v0.8 I7): the Stage B snapshot's registry_sha256 is the hash of
+    the v0.6 registry derived from the committed one by the substitutions of I7, and not the v0.7 one."""
     st = CK.load_state()
-    st.registry["conventions"] = "v0.7"
     ctx = CK.root_context(st, CK.RootView(SRC / SB), None)
     snap = next(iter(ctx.snaps.values()))
     got = (snap.get("run") or {}).get("registry_sha256")
-    return got == CK.rx_legacy_registry_hash(ctx) and got != CK.sha256_hex(CK.canon_bytes(st.registry)), got
+    vers = CK.registry_versions(st)
+    return got == vers["v0.6"][0] == CK.rx_legacy_registry_hash(ctx) and got != vers["v0.7"][0], got
 
 
 # ---------------------------------------------------------------------------
@@ -830,8 +829,27 @@ SCENARIO_FAULTS = [
 # ---------------------------------------------------------------------------
 
 
+REG8 = []  # v0.8: ["--registry", <the committed registry with the 22.9 substitutions>], set by main
+
+
+def make_reg8(out):
+    """v0.8 (22.9, I7): the committed registry with conventions v0.8, the New York Fed terms_url and
+    terms_checked of 22.9, beside a copy of the holiday table. Every check runs with it, so the
+    snapshots and CSVs written under v0.6 and v0.7 are read through the transition rules."""
+    reg = json.loads(CK.REGISTRY.read_text(encoding="utf-8"))
+    reg["conventions"] = "v0.8"
+    for k, src in reg["sources"].items():
+        src["terms_checked"] = CK.TERMS_CHECKED_V08
+        if k == CK.NYFED:
+            src["terms_url"] = CK.NYFED_TERMS_V08
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "econ.json").write_bytes((json.dumps(reg, indent=2, ensure_ascii=False) + chr(10)).encode("utf-8"))
+    shutil.copyfile(CK.REGISTRY.parent / "fed-holidays.json", out / "fed-holidays.json")
+    return out / "econ.json"
+
+
 def run_check(args, log):
-    proc = subprocess.run([sys.executable, "-I", str(HERE / "check_p22.py")] + args, cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace")
+    proc = subprocess.run([sys.executable, "-I", str(HERE / "check_p22.py")] + REG8 + args, cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace")
     Path(log).write_text(proc.stdout + proc.stderr, encoding="utf-8", newline="\n")
     fails = {ln.split(" ", 2)[1] for ln in proc.stdout.splitlines() if ln.startswith("FAIL ")}
     aborted = [ln for ln in proc.stdout.splitlines() if "section aborted" in ln]
@@ -848,7 +866,8 @@ def main(argv):
         print(f"refused: {out} is not empty")
         return 2
     out.mkdir(parents=True, exist_ok=True)
-    print(f"state_selftest.py: building under {out}")
+    REG8[:] = ["--registry", str(make_reg8(out / "reg8"))]
+    print(f"state_selftest.py: building under {out}; every check runs with {REG8[1]} (v0.8)")
     base = build_base(out / "base")
     jobs = [("base", ["--state", str(base)], out / "base.log")]
     for name, fn in VARIANTS:
@@ -926,7 +945,7 @@ def main(argv):
         expect(f"stage-b fault {name}: caught by {sorted(must)}" + (f" (may also fail {sorted(may)})" if may else ""),
                must <= new and new <= must | may and not aborted and code == 1, f"new FAIL {sorted(new)}; expected {sorted(must)}; aborted {aborted[:1]}")
     ok, got = legacy_hash_selftest()
-    expect("legacy reading of T46: with the registry's conventions set to v0.7 in memory, the Stage B snapshot carries the hash of the same registry with conventions v0.6", ok, got)
+    expect("legacy reading of T46: the Stage B snapshot carries the hash of the v0.6 registry derived by I7 (21.1, 22.9)", ok, got)
     code, sc_fails, aborted, summ = results["scenario"]
     g_fails = {x for x in sc_fails if x.startswith("G")}
     expect("scenario: the fabricated appendix G folder passes every G check (its stand-in root is not asserted)", not g_fails and not [a for a in aborted if a.startswith(("FAIL G", "FAIL state"))], f"G FAIL {sorted(g_fails)}; aborted {aborted[:2]}")

@@ -17,6 +17,9 @@ export const LABEL = 'rmf-alert';
 const KEY_LINE = /^rmf-alert-key: ([a-z][a-z0-9-]*(?::[a-z0-9][a-z0-9-]*)?)$/m;
 
 /** The issue title and body of an alert (21.5). */
+/** The keys the collection run's reconcile never touches (22.6): the publication run's and the watcher's own. */
+export const NOT_COLLECTOR_KEYS = new Set(['publish-failed', 'publication-verify-failed', 'manifest-missing', 'manifest-overdue', 'publication-history-changed']);
+
 export const issueText = (a) => ({ title: `${a.title} [${a.key}]`, body: `${a.body}\n\nrmf-alert-key: ${a.key}` });
 
 /** The key an issue carries, or null. */
@@ -24,9 +27,10 @@ export const keyOf = (issue) => KEY_LINE.exec(issue.body ?? '')?.[1] ?? null;
 
 /**
  * The actions that make the open `rmf-alert` issues match `wanted` (alerts with key, severity,
- * title, body), with `only` the keys this reconcile may touch (null: all). Pure.
+ * title, body), with `only` the keys this reconcile may touch (null: all) and `except` the keys
+ * it must never touch (v0.8, 22.6: another workflow owns them). Pure.
  */
-export function reconcilePlan(open, wanted, { only = null } = {}) {
+export function reconcilePlan(open, wanted, { only = null, except = null } = {}) {
   const byKey = new Map();
   for (const i of [...open].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.number - b.number))) {
     const k = keyOf(i);
@@ -37,7 +41,7 @@ export function reconcilePlan(open, wanted, { only = null } = {}) {
   const actions = [];
   const want = new Map(wanted.map((a) => [a.key, a]));
   for (const [k, issues] of [...byKey].sort(([a], [b]) => (a < b ? -1 : 1))) {
-    if (only && !only.has(k)) continue;
+    if ((only && !only.has(k)) || (except && except.has(k))) continue;
     const [keep, ...extra] = issues;
     for (const x of extra) actions.push({ action: 'close', number: x.number, key: k, why: 'duplicate' });
     if (!want.has(k)) actions.push({ action: 'close', number: keep.number, key: k, why: 'cleared' });
@@ -46,7 +50,7 @@ export function reconcilePlan(open, wanted, { only = null } = {}) {
       if (keep.title !== t.title || keep.body !== t.body) actions.push({ action: 'edit', number: keep.number, key: k, ...t });
     }
   }
-  for (const [k, a] of [...want].sort(([x], [y]) => (x < y ? -1 : 1))) if (!byKey.has(k) && (!only || only.has(k))) actions.push({ action: 'create', key: k, ...issueText(a) });
+  for (const [k, a] of [...want].sort(([x], [y]) => (x < y ? -1 : 1))) if (!byKey.has(k) && (!only || only.has(k)) && !(except && except.has(k))) actions.push({ action: 'create', key: k, ...issueText(a) });
   return actions;
 }
 
@@ -88,7 +92,7 @@ export async function applyPlan(api, actions) {
 export async function reconcileLedger(api, ledger) {
   const wanted = sanitizeAlerts(ledger);
   const open = await api.listOpen();
-  return applyPlan(api, reconcilePlan(open, wanted));
+  return applyPlan(api, reconcilePlan(open, wanted, { except: NOT_COLLECTOR_KEYS }));
 }
 
 /** The reconcile after a failed collection job: only the `collect-failed` issue (21.5). */

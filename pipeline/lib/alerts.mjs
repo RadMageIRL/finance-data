@@ -23,7 +23,8 @@ const HASH = /sha256:[0-9a-f]{64}/g;
 /** Why a text may not be published, or null when it may (17.8). */
 export function textRefusal(text) {
   if (typeof text !== 'string' || text.length === 0) return 'empty text';
-  if (text.length > MAX_TEXT) return `longer than ${MAX_TEXT} characters`;
+  // Characters are Unicode code points (22.3 item 1, v0.8).
+  if ([...text].length > MAX_TEXT) return `longer than ${MAX_TEXT} characters`;
   for (const [what, pattern] of REFUSALS) if (pattern.test(text)) return what;
   // A labeled content hash is allowed; any other long run of key-like characters is not.
   const rest = text.replace(HASH, 'sha256');

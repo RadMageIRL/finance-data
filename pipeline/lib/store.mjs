@@ -126,13 +126,15 @@ export function publish(p, { staged, stagedHolds, manifestText, generatedAt, die
     writeAtomic(path, text);
     added += Buffer.byteLength(text, 'utf8');
   };
-  const mutable = (path) => path === 'manifest.json' || path.startsWith('status/');
+  // Live only, never archived: the manifest, `status/`, and from v0.8 `NOTICE.txt` (22.9).
+  const liveOnly = (path) => path === 'NOTICE.txt' || path.startsWith('status/');
+  const mutable = (path) => path === 'manifest.json' || liveOnly(path);
   for (const [path, text] of staged) if (!mutable(path)) archive(join(p.files, path), text);
   for (const [path, text] of stagedHolds) archive(join(p.root, 'archive', path), text);
   if (manifestText !== null) archive(join(p.manifests, `${generatedAt.replace(/[-:]/g, '')}.json`), manifestText);
   if (die === 'after-archive') throw new Error('simulated death after the archive was written');
   for (const [path, text] of staged) if (!mutable(path)) writeAtomic(join(p.live, path), text);
-  for (const [path, text] of staged) if (path.startsWith('status/')) writeAtomic(join(p.live, path), text);
+  for (const [path, text] of staged) if (liveOnly(path)) writeAtomic(join(p.live, path), text);
   if (die === 'before-manifest') throw new Error('simulated death before the manifest was written');
   if (manifestText !== null) writeAtomic(join(p.live, 'manifest.json'), manifestText);
   if (die === 'after-manifest') throw new Error('simulated death after the manifest was written');

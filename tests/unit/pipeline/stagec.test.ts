@@ -25,7 +25,7 @@ const { effrRawRecord, fixtureRequest, loadRawFixtures, makeFixtureTransport } =
 import * as m5 from '../../../pipeline/bin/fixture-scenario.mjs';
 const { debtDay, effrDay, loadInputs } = m5 as unknown as Loose;
 import * as m6 from '../../../pipeline/bin/issues.mjs';
-const { issueText, reconcileFailed, reconcileLedger, reconcilePlan } = m6 as unknown as Loose;
+const { NOT_COLLECTOR_KEYS, issueText, reconcileFailed, reconcileLedger, reconcilePlan } = m6 as unknown as Loose;
 import * as m7 from '../../../pipeline/lib/run.mjs';
 const { runCollector } = m7 as unknown as Loose;
 import * as m8 from '../../../pipeline/lib/freshness.mjs';
@@ -435,5 +435,88 @@ describe('bytes, budgets and the checker summary', () => {
   it('reads the independent checker summary line and nothing else', () => {
     expect(checkerCounts('PASS C0 x\nSUMMARY 153 PASS, 0 FAIL, 2 SKIP\n')).toEqual({ pass: 153, fail: 0, skip: 2 });
     expect(checkerCounts('PASS C0 x\n')).toBeNull();
+  });
+});
+
+describe('v0.8 operations: the reason check and pins (21.6, 22.3, 17.6)', () => {
+  it('refuses an operation whose reason fails the text check before anything is read or written, naming only the rule', async () => {
+    const s = copyOfBase();
+    const before = hashTree(s);
+    const accepted = json(join(s, 'state', 'STATE.json')).accepted.snapshot;
+    await expect(op(s, 'rollback', 'o1', '2026-11-16T17:00:00Z', { to: accepted, reason: 'ask a@b.co why' })).rejects.toThrow(/^operation refused: the reason fails the publication text check \(an email address\); nothing is written$/);
+    await expect(op(s, 'pin', 'o2', '2026-11-16T17:00:00Z', { snapshot: accepted, siteRelease: 'v0.2.0', reason: 'owner authorization P56' })).rejects.toThrow(/\(a header name\)/);
+    expect(hashTree(s)).toBe(before);
+  });
+
+  it('pins and unpins a snapshot as operations that change pins.json only, with outcome no-change and no run record', async () => {
+    const s = copyOfBase();
+    const accepted = json(join(s, 'state', 'STATE.json')).accepted;
+    const pinned = await op(s, 'pin', 'o3', '2026-11-16T17:00:00Z', { snapshot: accepted.snapshot, siteRelease: 'v0.2.0', reason: 'the no-JavaScript page of the v0.2.0 release' });
+    expect(pinned.outcome).toBe('no-change');
+    expect(pinned.accepted).toEqual(accepted);
+    const pins = json(join(s, 'state', 'pins.json'));
+    expect(pins.pins.map((p: Loose) => [p.snapshot, p.site_release])).toEqual([[accepted.snapshot, 'v0.2.0']]);
+    const rec = json(join(s, 'runs', 'o3.json'));
+    expect(rec).toMatchObject({ trigger: 'operation', operation: 'pin', outcome: 'no-change', requests: [] });
+    expect(existsSync(join(s, 'state', 'run-records', 'o3.json'))).toBe(false);
+    expect(verifyStateV2(s)).toMatchObject({ ok: true, problems: [] });
+    await expect(op(s, 'pin', 'o4', '2026-11-16T17:05:00Z', { snapshot: accepted.snapshot, siteRelease: 'v0.2.0', reason: 'again' })).rejects.toThrow(/is already pinned; nothing is written/);
+    const unpinned = await op(s, 'unpin', 'o5', '2026-11-16T17:10:00Z', { snapshot: accepted.snapshot, reason: 'the release was replaced' });
+    expect(unpinned.outcome).toBe('no-change');
+    expect(json(join(s, 'state', 'pins.json')).pins).toEqual([]);
+    expect(json(join(s, 'state', 'pins.json')).unpinned.map((u: Loose) => u.snapshot)).toEqual([accepted.snapshot]);
+  });
+});
+
+describe('v0.8 private deployment log and publication alerts (22.4, 17.8, 22.6)', () => {
+  const at = '2026-11-16T20:17:00Z';
+  const runWith = (s: string, run: string, more: Loose = {}) => {
+    const r = request(data());
+    return collectStageC({ root: newDir(), state: s, run, trigger: 'schedule', env: { ...AUTH, ...(more.env ?? {}) }, transportRequest: r.request, clock: () => more.at ?? at, transportClock: () => new Date(more.at ?? at), wait: async () => {}, validate: passing, inputs, ...(more.publicationFacts ? { publicationFacts: more.publicationFacts } : {}), ...(more.unavailable ? { publicationFactsUnavailable: true } : {}) });
+  };
+  const logOf = (s: string) => json(join(s, 'state', 'deployments.json'));
+  const accepted = (s: string) => json(join(s, 'state', 'STATE.json')).accepted;
+  const releaseLog = (dataset: Loose, post: string | null) => ({ schema: 'rmf.econ.deployments/1', deployments: [{ number: 1, published_at: '2026-11-16T17:00:00Z', run: 'pub-1-1', trigger: 'manual', dataset, release: `data-${dataset.snapshot}-1-1`, site_commit: '0'.repeat(40), artifact: { files: 1, bytes: 1, sha256: 'a'.repeat(64) }, previous: null, verification: { checker: { pass: 1, fail: 0, skip: 0 }, post } }] });
+
+  it('writes an empty private log with no release, and a copy of the newest release log with its post fixed once the run completed', async () => {
+    const s = copyOfBase();
+    await runWith(s, 'g1');
+    expect(logOf(s)).toEqual({ schema: 'rmf.econ.deployments/1', deployments: [] });
+    expect(verifyStateV2(s)).toMatchObject({ ok: true, problems: [] });
+    const ds = accepted(s);
+    await runWith(s, 'g2', { publicationFacts: { newestLog: releaseLog(ds, null), newestRun: { completed: false } } });
+    expect(logOf(s).deployments[0].verification.post).toBeNull();
+    await runWith(s, 'g3', { publicationFacts: { newestLog: releaseLog(ds, null), newestRun: { completed: true, siteConclusion: 'success', verifyConclusion: 'success' } } });
+    expect(logOf(s).deployments[0].verification.post).toBe('passed');
+  });
+
+  it('keeps the previous private log and warns when the publication facts cannot be read', async () => {
+    const s = copyOfBase();
+    const ds = accepted(s);
+    await runWith(s, 'g4', { publicationFacts: { newestLog: releaseLog(ds, 'passed'), newestRun: null } });
+    const before = logOf(s);
+    const r = await runWith(s, 'g5', { unavailable: true });
+    expect(logOf(s)).toEqual(before);
+    expect(r.ledger.map((a: Loose) => a.key)).toContain('publication-facts-unavailable');
+  });
+
+  it('raises publication-behind only while timer publication is enabled and the accepted dataset waits over 12 hours', async () => {
+    const s = copyOfBase();
+    const old = { snapshot: '20261101T000000Z', manifest_sha256: 'f'.repeat(64) };
+    const facts = { publicationFacts: { newestLog: releaseLog(old, 'passed'), newestRun: null } };
+    const off = await runWith(s, 'g6', { ...facts, at: '2026-11-17T08:17:00Z' });
+    expect(off.ledger.map((a: Loose) => a.key)).not.toContain('publication-behind');
+    const early = await runWith(copyOfBase(), 'g6b', { ...facts, at: '2026-11-17T03:00:00Z', env: { PUBLICATION_SCHEDULE_ENABLED: 'true' } });
+    expect(early.ledger.map((a: Loose) => a.key)).not.toContain('publication-behind');
+    const on = await runWith(s, 'g7', { ...facts, at: '2026-11-17T12:17:00Z', env: { PUBLICATION_SCHEDULE_ENABLED: 'true' } });
+    expect(on.ledger.map((a: Loose) => a.key)).toContain('publication-behind');
+  });
+
+  it('never lets the collection reconcile touch the keys another workflow owns', () => {
+    const issue = (n: number, key: string) => ({ number: n, created_at: `2026-11-16T0${n}:00:00Z`, title: `x [${key}]`, body: `x\n\nrmf-alert-key: ${key}` });
+    const open = [issue(1, 'publish-failed'), issue(2, 'manifest-missing'), issue(3, 'stale:effr')];
+    const plan = reconcilePlan(open, [], { except: NOT_COLLECTOR_KEYS });
+    expect(plan.map((a: Loose) => [a.action, a.key])).toEqual([['close', 'stale:effr']]);
+    expect(reconcilePlan(open, [{ key: 'publication-history-changed', severity: 'critical', title: 't', body: 'b' }], { except: NOT_COLLECTOR_KEYS }).some((a: Loose) => a.key === 'publication-history-changed')).toBe(false);
   });
 });

@@ -10,7 +10,7 @@ import { validate } from '../../../pipeline/lib/json-schema.mjs';
 import { checkRecord, decimalFromNumber } from '../../../pipeline/lib/source-records.mjs';
 
 const json = (p: string) => JSON.parse(readFileSync(p, 'utf8'));
-const schemas = Object.fromEntries(['object', 'snapshot', 'manifest', 'revisions', 'runs'].map((n) => [n, json(`pipeline/schemas/${n}.schema.json`)]));
+const schemas = Object.fromEntries(['object', 'snapshot', 'manifest', 'manifest-v3', 'revisions', 'runs'].map((n) => [n, json(`pipeline/schemas/${n}.schema.json`)]));
 const sources = json('pipeline/schemas/source-records.json');
 const TREE = 'pipeline/fixtures/tree';
 
@@ -162,7 +162,10 @@ describe('example published tree', () => {
       if (!path.endsWith('.json')) continue;
       const k = kind(path);
       expect(k, path).not.toBeNull();
-      expect(validate(schemas[k!], JSON.parse(text)), path).toEqual([]);
+      // The committed example tree predates v0.8: its manifest/3 keeps its own schema (I31, I41).
+      const value = JSON.parse(text);
+      const schema = k === 'manifest' && value.schema === 'rmf.econ.manifest/3' ? schemas['manifest-v3'] : schemas[k!];
+      expect(validate(schema, value), path).toEqual([]);
       expect(canonicalJson(JSON.parse(text)), path).toBe(text);
     }
   });

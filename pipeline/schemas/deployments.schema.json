@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rmf.econ.deployments/1",
+  "title": "The deployment log: a chain of releases (DATA_CONVENTIONS 22.4, v0.8)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "deployments"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rmf.econ.deployments/1"
+    },
+    "deployments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshot",
+        "manifest_sha256"
+      ],
+      "properties": {
+        "snapshot": {
+          "type": "string",
+          "pattern": "^\\d{8}T\\d{6}Z$"
+        },
+        "manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "number",
+        "published_at",
+        "run",
+        "trigger",
+        "dataset",
+        "release",
+        "site_commit",
+        "artifact",
+        "previous",
+        "verification"
+      ],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_at": {
+          "$ref": "#/$defs/time"
+        },
+        "run": {
+          "type": "string",
+          "pattern": "^pub-\\d+-\\d+$"
+        },
+        "trigger": {
+          "enum": [
+            "manual",
+            "timer",
+            "redeploy"
+          ]
+        },
+        "dataset": {
+          "$ref": "#/$defs/dataset"
+        },
+        "release": {
+          "type": "string",
+          "pattern": "^data-\\d{8}T\\d{6}Z-\\d+-\\d+$"
+        },
+        "site_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "files",
+            "bytes",
+            "sha256"
+          ],
+          "properties": {
+            "files": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "previous": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/dataset"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "checker",
+            "post"
+          ],
+          "properties": {
+            "checker": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "pass",
+                "fail",
+                "skip"
+              ],
+              "properties": {
+                "pass": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "fail": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "skip": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "post": {
+              "enum": [
+                "passed",
+                "failed",
+                "not-deployed",
+                null
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

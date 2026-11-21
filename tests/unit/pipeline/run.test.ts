@@ -97,7 +97,8 @@ describe('a first publication', () => {
     expect(m.series['m1-sa'].last_released).toEqual({ date: '2026-10-27', basis: 'calendar' });
     const csv = readFileSync(join(root, 'live', m.series['debt-held-public'].csvs[0].path), 'utf8');
     expect(csv.split('\n')[5]).toBe('period,value_usd,missing_code,released,released_basis');
-    expect(listFiles(join(root, 'live')).every((f: string) => existsSync(join(root, 'archive/files', f)) || f === 'manifest.json' || f.startsWith('status/'))).toBe(true);
+    // v0.8 (22.9): NOTICE.txt is live only, like the manifest and status/.
+    expect(listFiles(join(root, 'live')).every((f: string) => existsSync(join(root, 'archive/files', f)) || f === 'manifest.json' || f === 'NOTICE.txt' || f.startsWith('status/'))).toBe(true);
   });
 
   it('refuses a live run while collection is not activated, before touching the root', async () => {
@@ -173,7 +174,8 @@ describe('the publish gate', () => {
         manifest.series.effr.revisions = [];
       });
     }));
-    expect(noRecord.problems).toEqual(['gate 6: effr: 1 published change(s) but 0 matching revision record(s)']);
+    // v0.8: the gate also sees that the manifest names a revision CSV for a log version it no longer names.
+    expect(noRecord.problems).toEqual(['gate 9: effr: 0 revision log version(s) but 1 revision CSV(s)', 'gate 6: effr: 1 published change(s) but 0 matching revision record(s)']);
     const restamped = await go(root, '2026-11-13T16:27:00Z', data(effr), {}, breakWith((staged) => rebuild(staged, (snap, manifest) => {
       snap.series['debt-total'].retrieved_at = '2026-11-13T16:27:00Z';
       manifest.series['debt-total'].retrieved_at = '2026-11-13T16:27:00Z';
@@ -509,7 +511,8 @@ describe('review, rollback and restore', () => {
       staged.set('manifest.json', canonicalJson(manifest));
     } } });
     expect(r.outcome).toBe('gate-failed');
-    expect(r.problems).toEqual(['gate 6: effr: the rollback changes 1 member(s) but records 0']);
+    // v0.8: the gate also sees that the revision CSV no longer matches the changed log version.
+    expect(r.problems).toEqual([expect.stringMatching(/^gate 9: effr: revision CSV revisions\/effr\/2026\/[0-9a-f]{16}\.csv is not the one section 10 builds from revisions\/effr\/2026\/[0-9a-f]{16}\.json$/), 'gate 6: effr: the rollback changes 1 member(s) but records 0']);
     expect(json(root, 'live/manifest.json').rollback).toBeNull();
   });
 
