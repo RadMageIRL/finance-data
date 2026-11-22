@@ -15,7 +15,7 @@ const { artifactArchive, artifactSha256, artifactSummary, deployedDataset, disal
 import * as m2 from '../../../pipeline/lib/site-build.mjs';
 const { checkRelease, currentText, deployRefusal, deployedState, inputRefusal, runName } = m2 as unknown as Loose;
 import * as m5 from '../../../pipeline/bin/publish.mjs';
-const { assemble, dispatchInputs, release, reportPlan, v3At } = m5 as unknown as Loose;
+const { assemble, COMPAT_DATASET, COMPAT_LINE, dispatchInputs, isCompatDataset, release, releaseBody, reportPlan, v3At } = m5 as unknown as Loose;
 import * as m6 from '../../../pipeline/bin/state-scenario.mjs';
 const { runStateScenario } = m6 as unknown as Loose;
 import * as m4 from '../../../pipeline/bin/publication-facts.mjs';
@@ -86,6 +86,22 @@ describe('the artifact and its archive (22.3)', () => {
 });
 
 describe('releases and the deployment log (22.4)', () => {
+  it('adds the compatibility line to the release body for the dataset of 22.2 amendment 1 only (both values together)', () => {
+    const info = (dataset: Loose) => ({ dataset, artifact: { files: 3, bytes: 10, sha256: 'e'.repeat(64) }, mode: 'manual', site_commit: COMMIT });
+    const plain = releaseBody(info({ snapshot: S1, manifest_sha256: H1 }));
+    const NL = String.fromCharCode(10);
+    expect(plain.split(NL)).toHaveLength(3);
+    expect(plain).not.toContain('Compatibility exception');
+    const compat = releaseBody(info({ ...COMPAT_DATASET }));
+    expect(compat.split(NL)).toEqual([...plain.replaceAll(S1, COMPAT_DATASET.snapshot).replaceAll(H1, COMPAT_DATASET.manifest_sha256).split(NL), COMPAT_LINE]);
+    expect(COMPAT_LINE).toBe('Compatibility exception: this dataset is the accepted rmf.econ.manifest/3 dataset published unchanged, without rule files, under a one-time owner authorization of 2026-11-22 (data conventions v0.8 amendment 1). Every other dataset needs a manifest/4.');
+    expect(COMPAT_DATASET).toEqual({ snapshot: '20261121T001752Z', manifest_sha256: '180a1991a56582e8a03813efa556d2695b3f28f7e415b763b06e499e57c1188d' });
+    expect(isCompatDataset({ snapshot: COMPAT_DATASET.snapshot, manifest_sha256: H1 })).toBe(false);
+    expect(isCompatDataset({ snapshot: S1, manifest_sha256: COMPAT_DATASET.manifest_sha256 })).toBe(false);
+    expect(isCompatDataset(null)).toBe(false);
+    expect(releaseBody(info({ snapshot: COMPAT_DATASET.snapshot, manifest_sha256: H1 }))).not.toContain('Compatibility exception');
+  });
+
   it('chains the log: numbers continue, previous links, and the previous post is fixed only once its run completed', () => {
     const one = nextLog(null, null, entry(S1, H1, 1));
     expect(one.deployments.map((d: Loose) => [d.number, d.previous, d.verification.post])).toEqual([[1, null, null]]);

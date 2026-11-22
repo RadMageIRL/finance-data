@@ -21,6 +21,12 @@ state store (local/research/p27/observe/state, read only; its .git is left out):
   release    the release mode on B, with and without A; faults. The release history (22.7) on A and B.
   scenario   a fabricated appendix J folder (19 steps: steps.json, releases/, production/, store/)
              following the rows, with datasets made by cloning the accepted snapshot; then faults.
+  exception  22.2 amendment 1, on a byte copy of the store of the exception dataset 20261121T001752Z
+             (local/research/p49/p8/state, read only), with the committed registry as a publication
+             run uses it: published as it stands it passes P8 and the report says the exception was
+             applied; with NOTICE.txt, a registry/ or a notices/ file it fails P8; the same document in
+             other bytes and another manifest/3 (the p27 store's) fail P8 as before. Its
+             identification (snapshot id and manifest bytes together) is probed with the pin given.
 
 Standard library only. Writes only under the output folder. Every check run is a subprocess of
 `python -I tests/datacheck/check_p22.py --registry <reg8> ...`; the FAIL ids are compared with the
@@ -40,6 +46,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SRC = ROOT / "local" / "research" / "p27" / "observe" / "state"
+EXC = ROOT / "local" / "research" / "p49" / "p8" / "state"  # the store of the 22.2 exception dataset (amendment 1)
+RULES_MISSING = "the manifest is rmf.econ.manifest/3: no rule files (22.9: written with every manifest from the first v0.8 run on; a publication needs them, reading)"
+COMPAT_NOTE = "compatibility exception applied (22.2 amendment 1): manifest/3 dataset 20261121T001752Z without rule files"
 
 
 def load(name, file_name):
@@ -238,11 +247,16 @@ def run_checker(args):
     return r.returncode, fails, summary[-1] if summary else r.stdout[-400:] + r.stderr[-400:], r.stdout
 
 
-def expect(label, args, want, only=None, log=None):
+def expect(label, args, want, only=None, log=None, has=(), lacks=()):
+    """has: (line prefix, text) pairs, each needing a report line with that prefix holding the text;
+    lacks: texts no report line holds."""
     code, fails, summary, out = run_checker(args)
     got = fails if only is None else {f for f in fails if f in only}
-    ok = got == set(want)
-    RESULTS.append((ok, label, sorted(got), sorted(want), summary))
+    lines = out.splitlines()
+    text = [f"no line {pre!r} with {t!r}" for pre, t in has if not any(x.startswith(pre) and t in x for x in lines)]
+    text += [f"a line with {t!r}" for t in lacks if t in out]
+    ok = got == set(want) and not text
+    RESULTS.append((ok, label, sorted(got) + text, sorted(want), summary))
     if log is not None:
         write(log, out.encode("utf-8"))
     return ok
@@ -589,6 +603,9 @@ def main():
     probes.append(("P10 a hold whose archive asset and candidate are in the artifact", len(leaks) == 2, leaks))
     probes.append(("P10 no leak without them", CP.hold_leaks(CK, {"snapshots/20261124T120000Z.json": canon(snapdoc)}) == [], []))
 
+    # --- the 22.2 exception (amendment 1): one manifest/3 dataset published without rule files ---
+    compat_section(out, st8, m3, jobs, probes)
+
     # --- appendix J ---
     jdir = out / "scenario"
     build_j(jdir, store, st8, tree_b)
@@ -671,6 +688,64 @@ def main():
         print(f"{'PASS' if ok else 'FAIL'} {label}: FAIL ids {got}" + ("" if ok else f", expected {want}") + (f" [{summary}]" if summary else ""))
     print(f"SUMMARY {n_ok} PASS, {len(RESULTS) - n_ok} FAIL")
     return 0 if n_ok == len(RESULTS) else 1
+
+
+def compat_section(out, st8, m3, jobs, probes):
+    """22.2 amendment 1 and 22.5 check 8: the publication mode on the exception dataset (EXC) and on
+    another manifest/3 (SRC), with the committed registry; then probes of the identification, the pin
+    given to compat_exception and rule_file_problems (no other bytes can hash to the pinned SHA-256)."""
+    real = (EXC / "root" / "live" / "manifest.json").read_bytes() if (EXC / "state" / "STATE.json").is_file() else None
+    if real is None:
+        probes.append((f"22.2 exception: the store of the exception dataset {EXC}", False, ["missing: its cases cannot run"]))
+
+    def pub(name, label, src, want, fn=None, has=(), lacks=()):
+        s = mutate_store(src, out / "compat" / name / "store", fn or (lambda d: None))
+        accepted = load_json(s / "state" / "STATE.json")["accepted"]
+        f_, _ = build_artifact(live_tree(s), None, accepted, "2026-11-22T15:15:33Z", "pub-1-1")
+        jobs.append((f"22.2 exception: {label}", ["--publication", write_tree(f_, out / "compat" / name / "artifact"), "--state", s], want, None, None, has, lacks))
+
+    named = ("FAIL P8 ", "is in the artifact of the 22.2 exception dataset 20261121T001752Z")
+    before = [("FAIL P8 ", RULES_MISSING)]
+    if real is not None:
+        pub("as-it-stands", "the dataset as it stands passes P8 and the report says the exception was applied", EXC, set(), has=[("PASS P8 ", COMPAT_NOTE)])
+        pub("notice-txt", "with a NOTICE.txt it fails P8", EXC, {"P5", "P8"}, fn=lambda d: write(d / "root" / "live" / "NOTICE.txt", b"notice\n"), has=[named])
+        regb = canon(st8.registry)
+        pub("registry-file", "with a registry/ file it fails P8", EXC, {"P5", "P8"}, fn=lambda d: write(d / "root" / "live" / f"registry/econ-{sha(regb)[:16]}.json", regb), has=[named])
+        note = b"notice\n"
+        pub("notices-file", "with a notices/ file it fails P8", EXC, {"P5", "P8"}, fn=lambda d: write(d / "root" / "live" / f"notices/{sha(note)[:16]}.txt", note), has=[named])
+
+        def reserialized(d):
+            m = d / "root" / "live" / "manifest.json"
+            write(m, json.dumps(load_json(m), indent=1).encode("utf-8"))
+            restate(d)
+        pub("other-bytes", "the same manifest in other bytes is not the dataset of the exception: P8 fails as before", EXC, {"P8", "P9"}, fn=reserialized, has=before, lacks=[COMPAT_NOTE, "22.2 exception"])
+    pub("another-manifest-3", "another manifest/3 (the p27 store's) fails P8 as before", SRC, {"P8"}, has=before, lacks=[COMPAT_NOTE, "22.2 exception"])
+
+    xb = canon(dict(m3, snapshot=dict(m3["snapshot"], id=CP.COMPAT_SNAPSHOT)))  # the pinned snapshot id with other bytes
+    pin = (CP.COMPAT_SNAPSHOT, sha(xb))
+    yb = canon(dict(m3, schema=CK.MANIFEST_V4, snapshot=dict(m3["snapshot"], id=CP.COMPAT_SNAPSHOT)))
+    cases = [
+        ("the constants are the dataset of 22.2 amendment 1", (CP.COMPAT_SNAPSHOT, CP.COMPAT_MANIFEST_SHA256),
+         ("20261121T001752Z", "180a1991a56582e8a03813efa556d2695b3f28f7e415b763b06e499e57c1188d")),
+        ("the pinned snapshot id with another manifest SHA-256 is not the exception", CP.compat_exception(xb), False),
+        ("with the pin given as that manifest's (snapshot id, SHA-256), it is", CP.compat_exception(xb, pin), True),
+        ("the pinned SHA-256 with another snapshot id is not", CP.compat_exception(xb, ("20261121T041752Z", sha(xb))), False),
+        ("the same document re-serialized (other bytes) is not", CP.compat_exception(json.dumps(CK.load_strict(xb), indent=1).encode("utf-8"), pin), False),
+        ("a manifest/4 is never the exception, even with its own pair pinned", CP.compat_exception(yb, (CP.COMPAT_SNAPSHOT, sha(yb))), False),
+        ("no manifest is not", CP.compat_exception(None), False),
+        ("rule files: another manifest/3, the constants: refused with the message of before", CP.rule_file_problems(CK, st8, {"manifest.json": xb}), [RULES_MISSING]),
+        ("rule files: the pinned dataset without rule files passes", CP.rule_file_problems(CK, st8, {"manifest.json": xb, "status/runs.json": b"{}"}, pinned=pin), []),
+    ]
+    for f in ("NOTICE.txt", "registry/econ-" + "a" * 16 + ".json", "notices/" + "b" * 16 + ".txt"):
+        got = CP.rule_file_problems(CK, st8, {"manifest.json": xb, f: b"x"}, pinned=pin)
+        cases.append((f"rule files: the pinned dataset with {f} fails", len(got) == 1 and f"econ/{f} is in the artifact of the 22.2 exception dataset" in got[0], True))
+    got = CP.rule_file_problems(CK, st8, {"manifest.json": yb}, pinned=(CP.COMPAT_SNAPSHOT, sha(yb)))
+    cases.append(("rule files: a manifest/4 with its own pair pinned is held to the rule files of 22.9", bool(got) and not any("22.2" in x for x in got), True))
+    if real is not None:
+        cases.append(("the exception dataset's accepted manifest bytes are the exception", CP.compat_exception(real), True))
+        cases.append(("rule files: the exception dataset's manifest, the constants, no rule files: passes", CP.rule_file_problems(CK, st8, {"manifest.json": real}), []))
+    for label, got, want in cases:
+        probes.append((f"22.2 exception probe: {label}", got == want, [] if got == want else [f"got {got!r}, want {want!r}"]))
 
 
 def rebuild_release(folder, log_doc):

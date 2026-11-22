@@ -72,11 +72,20 @@ export function assemble(o) {
   return { outcome: 'assembled', ...info, problems: [] };
 }
 
-/** The release body (22.4). */
+/**
+ * The one manifest/3 dataset that may be published unchanged, without rule files (22.2,
+ * amendment 1 to v0.8; owner authorization P107): both values together identify it.
+ */
+export const COMPAT_DATASET = Object.freeze({ snapshot: '20261121T001752Z', manifest_sha256: '180a1991a56582e8a03813efa556d2695b3f28f7e415b763b06e499e57c1188d' });
+export const COMPAT_LINE = 'Compatibility exception: this dataset is the accepted rmf.econ.manifest/3 dataset published unchanged, without rule files, under a one-time owner authorization of 2026-11-22 (data conventions v0.8 amendment 1). Every other dataset needs a manifest/4.';
+export const isCompatDataset = (dataset) => Boolean(sameDataset(dataset, COMPAT_DATASET));
+
+/** The release body (22.4), with the exception's line for the dataset of 22.2 amendment 1. */
 export const releaseBody = (info) => [
   `Dataset: snapshot ${info.dataset.snapshot}, manifest sha256:${info.dataset.manifest_sha256}.`,
   `Artifact: ${info.artifact.files} files, ${info.artifact.bytes} bytes, sha256:${info.artifact.sha256}.`,
   `Trigger: ${info.mode}. Site commit: ${info.site_commit}.`,
+  ...(isCompatDataset(info.dataset) ? [COMPAT_LINE] : []),
 ].join('\n');
 
 /**

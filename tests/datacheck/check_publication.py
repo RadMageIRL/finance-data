@@ -41,6 +41,11 @@ RX_TAG_SITE = re.compile(r"data-\d{8}T\d{6}Z-\d+-\d+", re.ASCII)  # 22.8 input p
 RX_EXPECTED = re.compile(r"none|(\d{8}T\d{6}Z):([0-9a-f]{64})", re.ASCII)  # 22.8
 LIMIT_PUBLISHED = 250_000_000  # 17.7
 ZERO_COMMIT = "0" * 40  # appendix J
+# 22.2 amendment 1 (owner authorization P107, appendix I row I49): the one manifest/3 dataset that passes
+# the rule-file part of 22.5 check 8 without rule files, identified by both values together
+COMPAT_SNAPSHOT = "20261121T001752Z"
+COMPAT_MANIFEST_SHA256 = "180a1991a56582e8a03813efa556d2695b3f28f7e415b763b06e499e57c1188d"
+COMPAT_SCHEMA = "rmf.econ.manifest/3"  # 22.2: its manifest stays rmf.econ.manifest/3
 
 
 # ---------------------------------------------------------------------------
@@ -496,16 +501,38 @@ def limit_problems(ck, files):
     return p, total
 
 
-def rule_file_problems(ck, st, files, store=None):
+def compat_exception(manifest_bytes, pinned=(COMPAT_SNAPSHOT, COMPAT_MANIFEST_SHA256)):
+    """22.2 amendment 1, 22.5 check 8: whether econ/manifest.json is the dataset of the exception: its
+    bytes hash to the pinned SHA-256 and the snapshot id it names is the pinned one, both together, and
+    it is a manifest/3 (a manifest/4 is never the exception). reading: the SHA-256 is that of the bytes
+    of manifest.json as the artifact holds them (the manifest_sha256 of 21.1), never of a parsed
+    re-serialization. `pinned` is given by the self-tests only; the modes use the constants."""
+    import hashlib
+    if not isinstance(manifest_bytes, bytes) or hashlib.sha256(manifest_bytes).hexdigest() != pinned[1]:
+        return False
+    try:
+        m = json.loads(manifest_bytes)
+    except Exception:
+        return False
+    return isinstance(m, dict) and m.get("schema") == COMPAT_SCHEMA and isinstance(m.get("snapshot"), dict) and m["snapshot"].get("id") == pinned[0]
+
+
+def rule_file_problems(ck, st, files, store=None, pinned=(COMPAT_SNAPSHOT, COMPAT_MANIFEST_SHA256)):
     """22.5 check 8 (second part): every registry copy hashes to the registry hash a window snapshot
     names (and each such hash has its copy), the holiday copy and the notice file as 22.9 gives them,
-    NOTICE.txt equal to the named notice."""
+    NOTICE.txt equal to the named notice. For a manifest/3 the rule files are required, except for the
+    dataset of the 22.2 exception (amendment 1): for it this part passes when the artifact holds no
+    registry/ or notices/ file and no NOTICE.txt. `pinned` is given by the self-tests only."""
     p = []
     try:
         m = ck.load_strict(files["manifest.json"])
     except Exception:
         return ["econ/manifest.json unreadable"]
     if m.get("schema") != ck.MANIFEST_V4:
+        if compat_exception(files["manifest.json"], pinned):
+            # 22.2 amendment 1: published as it stands; nothing is added to make up for the rule files
+            return [f"econ/{f} is in the artifact of the 22.2 exception dataset {pinned[0]} (amendment 1: its manifest/3 is published without rule files, so it holds no registry/ or notices/ file and no NOTICE.txt; 22.5 check 8)"
+                    for f in sorted(files) if f == "NOTICE.txt" or f.startswith(("registry/", "notices/"))]
         return [f"the manifest is {m.get('schema')}: no rule files (22.9: written with every manifest from the first v0.8 run on; a publication needs them, reading)"]
     rules = m.get("rules") or {}
     by_hash = ck.registry_by_hash(st)
@@ -773,8 +800,10 @@ def run_publication(ck, st, target, store_dir, prev_dir=None):
         if newest.get("artifact") != {"files": a_n, "bytes": a_b, "sha256": a_sha}:
             p.append(f"the new entry's artifact {newest.get('artifact')} is not {{files {a_n}, bytes {a_b}, sha256 {a_sha[:16]}}} over the tree without status/deployments.json (22.3)")
     p += rule_file_problems(ck, st, files, store)
+    compat = compat_exception(files.get("manifest.json"))  # 22.5 check 8: the report says that the 22.2 exception was applied
     check("P8 the deployment log extends the newest earlier release's log (its last post fixed, one new entry with post null and its artifact recomputed); every registry copy hashes to a registry a window snapshot names, the holiday copy and the notice file are as 22.9 gives them, NOTICE.txt equals the named notice (22.4, 22.5 check 8, 22.9)", p,
-          f"{len(art_log)} log entries; newest earlier release {prev_tag or 'none'}")
+          f"{len(art_log)} log entries; newest earlier release {prev_tag or 'none'}"
+          + (f"; compatibility exception applied (22.2 amendment 1): manifest/3 dataset {COMPAT_SNAPSHOT} without rule files" if compat else ""))
 
     jp, nj = json_problems(ck, st, files)
     check("P9 every JSON file of the artifact is canonical and valid against its schema (manifest/3 or manifest/4 and deployments/1 as built from the text) (22.5 check 9)", jp, f"{nj} JSON files")
