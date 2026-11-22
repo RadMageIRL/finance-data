@@ -4,7 +4,7 @@ The economic data pipeline of RadMage Finance (https://radmagelabs.com/finance/)
 
 ## Status
 
-Stage C: scheduled **private** collection (data conventions v0.7, section 21), running the Stage D code of data conventions v0.8 (section 22) with publication **prepared and not enabled**. **Private.** Nothing is published:
+Stage C: scheduled **private** collection (data conventions v0.7, section 21), running the Stage D code of data conventions v0.8 (section 22) with publication **prepared and not enabled**. **Public code, private data:** this repository holds the code, and the accepted data lives in the separate **private** repository `RadMageIRL/finance-data-state`. Nothing is published here:
 
 - the `collect` workflow runs every four hours at :17 UTC, dispatched in mode `timer` by a Cloudflare Worker cron (`17 */4 * * *`) that names the slot it fired for (GitHub's own cron is no longer a trigger); a scheduled run collects only while the repository variables `LIVE_COLLECTION_AUTHORIZED` and `COLLECTION_SCHEDULE_ENABLED` are both `true` (delete either to pause); a manual live run also needs the typed confirmation LIVE; requests identify themselves as `RadMage Finance (+https://radmagelabs.com/finance/)`;
 - the `watch` workflow checks the collect runs from outside them (GitHub's own cron at 01:47, 07:47, 13:47 and 19:47 UTC, and a dispatch by the same Worker at 02:47, 06:47, 10:47, 14:47, 18:47 and 22:47 UTC) and opens or closes the alert issues for a run gap, a disabled collect workflow, a failure streak and repository inactivity, so a stopped timer is reported even when no collection starts; its job fails on a gap, a disabled workflow or a failure streak;
@@ -14,6 +14,8 @@ Stage C: scheduled **private** collection (data conventions v0.7, section 21), r
 - nothing is published: GitHub Pages is not enabled, the `publish` workflow does nothing unless the repository variable `PUBLICATION_ENABLED` is `true` (it is not set), no release exists, and no public dataset exists.
 
 Publication needs its own authorization.
+
+Copies of this pipeline must change the request identification in `pipeline/registry/econ.json` (each source's `request.user_agent` and `request.contact`): it names RadMage Finance to the data providers.
 
 ## Layout
 
