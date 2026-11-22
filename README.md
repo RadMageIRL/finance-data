@@ -30,7 +30,7 @@ Copies of this pipeline must change the request identification in `pipeline/regi
 | `tests/unit/pipeline/` | Unit and end-to-end fixture tests (Vitest) |
 | `tests/datacheck/` | The independent checker, written from the specification text alone (Python standard library): plain, root, live root, state store, scenario, publication and release modes, and the comparison with the saved histories |
 | `tools/datacheck.mjs` | Writes the three scenarios twice (the bytes must match, and the appendix B tree hash must equal the committed one on every platform) and runs the checker on them |
-| `pipeline/timer/worker.mjs` | The Cloudflare Worker `finance-collect-timer`: its cron `17 */4 * * *` dispatches `collect` in mode `timer` with the slot, its cron `47 2-22/4 * * *` dispatches `watch`; minute 37 would dispatch `publish` in mode `timer`, but no such cron line exists; one secret, a fine-grained token for this repository with Actions read and write; no route |
+| `pipeline/timer/worker.mjs` | The Cloudflare Worker `finance-collect-timer`: its cron `17 */4 * * *` dispatches `collect` in mode `timer` with the slot, its cron `47 2-22/4 * * *` dispatches `watch`, and its cron `41 */2 * * *` dispatches the `news` workflow of the Finance site repository (the two-hourly news refresh); minute 37 would dispatch `publish` in mode `timer`, but no such cron line exists; two secrets, each a fine-grained token with Actions read and write for one repository (`GITHUB_TOKEN` for this one, `NEWS_DISPATCH_TOKEN` for the Finance site); no route |
 | `.github/workflows/` | `ci` (every push), `collect` (timer dispatch and manual), `watch` (GitHub cron and timer dispatch), `operate` (manual), `rehearse` (manual, fixtures), `publish` (prepared, not enabled) |
 
 ## Running the checks
