@@ -15,7 +15,7 @@ const { artifactArchive, artifactSha256, artifactSummary, deployedDataset, disal
 import * as m2 from '../../../pipeline/lib/site-build.mjs';
 const { checkRelease, currentText, deployRefusal, deployedState, inputRefusal, runName } = m2 as unknown as Loose;
 import * as m5 from '../../../pipeline/bin/publish.mjs';
-const { assemble, COMPAT_DATASET, COMPAT_LINE, dispatchInputs, isCompatDataset, release, releaseBody, reportPlan, v3At } = m5 as unknown as Loose;
+const { assemble, COMPAT_DATASET, COMPAT_LINE, dispatchInputs, isCompatDataset, previousReleaseTag, release, releaseBody, reportPlan, v3At } = m5 as unknown as Loose;
 import * as m6 from '../../../pipeline/bin/state-scenario.mjs';
 const { runStateScenario } = m6 as unknown as Loose;
 import * as m4 from '../../../pipeline/bin/publication-facts.mjs';
@@ -100,6 +100,18 @@ describe('releases and the deployment log (22.4)', () => {
     expect(isCompatDataset({ snapshot: S1, manifest_sha256: COMPAT_DATASET.manifest_sha256 })).toBe(false);
     expect(isCompatDataset(null)).toBe(false);
     expect(releaseBody(info({ snapshot: COMPAT_DATASET.snapshot, manifest_sha256: H1 }))).not.toContain('Compatibility exception');
+  });
+
+  it('names the newest earlier release for V2c from its own last log entry (22.5), and none before the first', () => {
+    expect(previousReleaseTag({ newestLog: null, newestRun: null })).toBeNull();
+    expect(previousReleaseTag(null)).toBeNull();
+    const one = nextLog(null, null, entry(S1, H1, 7));
+    expect(previousReleaseTag({ newestLog: one })).toBe(releaseTag(S1, 7, 1));
+    const two = nextLog(one, 'not-deployed', entry(S2, H2, 9));
+    expect(previousReleaseTag({ newestLog: two })).toBe(releaseTag(S2, 9, 1));
+    const bad = structuredClone(two);
+    bad.deployments[1].release = '../data-x';
+    expect(() => previousReleaseTag({ newestLog: bad })).toThrow(/not a data-\* tag/);
   });
 
   it('chains the log: numbers continue, previous links, and the previous post is fixed only once its run completed', () => {

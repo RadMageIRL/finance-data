@@ -80,6 +80,18 @@ export const COMPAT_DATASET = Object.freeze({ snapshot: '20261121T001752Z', mani
 export const COMPAT_LINE = 'Compatibility exception: this dataset is the accepted rmf.econ.manifest/3 dataset published unchanged, without rule files, under a one-time owner authorization of 2026-11-22 (data conventions v0.8 amendment 1). Every other dataset needs a manifest/4.';
 export const isCompatDataset = (dataset) => Boolean(sameDataset(dataset, COMPAT_DATASET));
 
+/**
+ * The tag of the newest earlier release, which V2c checks the new log against (22.5: "the
+ * artifact, the store and the newest earlier release"): its own last log entry names it. Null
+ * when no release exists. Throws when the name does not pass the tag pattern (22.8).
+ */
+export function previousReleaseTag(facts) {
+  const last = facts?.newestLog?.deployments?.at(-1);
+  if (!last) return null;
+  if (!/^data-\d{8}T\d{6}Z-\d+-\d+$/.test(String(last.release))) throw new Error(`the newest release's log names the release ${last.release}, which is not a data-* tag`);
+  return last.release;
+}
+
 /** The release body (22.4), with the exception's line for the dataset of 22.2 amendment 1. */
 export const releaseBody = (info) => [
   `Dataset: snapshot ${info.dataset.snapshot}, manifest sha256:${info.dataset.manifest_sha256}.`,
@@ -172,6 +184,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       const { readCollectFacts } = await import('./publication-facts.mjs');
       const env = process.env;
       const facts = await readCollectFacts({ token: env.GITHUB_TOKEN, repository: env.GITHUB_REPOSITORY, siteRepository: env.SITE_REPOSITORY });
+      // V2c reads the newest earlier release (22.5): its four public assets, downloaded without
+      // authentication into a folder named by its tag (the checker reads the tag from the name).
+      const prevTag = previousReleaseTag(facts);
+      let prevDir = null;
+      if (prevTag) {
+        const { downloadRelease } = await import('./site-data.mjs');
+        prevDir = join(out, 'previous', prevTag);
+        await downloadRelease({ releaseRepository: env.GITHUB_REPOSITORY, tag: prevTag, dir: prevDir });
+      }
       const mode = arg('--mode');
       const target = mode === 'redeploy' ? JSON.parse(readFileSync(arg('--target'), 'utf8')) : null;
       const r = assemble({
@@ -179,7 +200,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
         runId: Number(env.GITHUB_RUN_ID), attempt: Number(env.GITHUB_RUN_ATTEMPT ?? 1), now: `${new Date().toISOString().slice(0, 19)}Z`, facts,
         siteCommit: arg('--site-commit'), deployed: arg('--deployed') && arg('--deployed') !== 'none' ? { snapshot: arg('--deployed').split(':')[0], manifest_sha256: arg('--deployed').split(':')[1] } : null,
         validateState: (s) => runChecker(['--state', s]),
-        validatePublication: (tree, s) => runChecker(['--publication', tree, '--state', s]),
+        validatePublication: (tree, s) => runChecker(['--publication', tree, '--state', s, ...(prevDir ? ['--previous-release', prevDir] : [])]),
         outDir: out,
       });
       writeFileSync(join(out, 'outcome.json'), JSON.stringify(r));
