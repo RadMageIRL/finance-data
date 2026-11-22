@@ -7,9 +7,16 @@
 // write (it can start, cancel or re-run workflows, never touch the state store). No fetch handler
 // and no route. The pause switch stays on GitHub: while COLLECTION_SCHEDULE_ENABLED is not
 // "true", a dispatched collect run's job is skipped.
+//
+// Financial News (Finance v0.3.x, owner decision P112): the cron line 41 */2 * * * dispatches the
+// news workflow of RadMageIRL/finance (a site build that reads the feeds and keeps the deployed
+// dataset), with its own secret NEWS_DISPATCH_TOKEN: the existing fine-grained token for the Finance
+// repository alone with Actions read and write (finance-pages-dispatch, P7). The news firing never
+// uses GITHUB_TOKEN, and collection and the watch never use NEWS_DISPATCH_TOKEN.
 
 export const REPOSITORY = 'RadMageIRL/finance-data';
-export const CRON_LINES = ['17 */4 * * *', '47 2-22/4 * * *'];
+export const SITE_REPOSITORY = 'RadMageIRL/finance';
+export const CRON_LINES = ['17 */4 * * *', '47 2-22/4 * * *', '41 */2 * * *'];
 const RETRY_WAITS_MS = [5000, 30000];
 
 /**
@@ -30,8 +37,13 @@ export function targetFor(slot) {
   // CRON_LINES and not deployed before gate 22; publish.yml refuses a timer run unless
   // PUBLICATION_ENABLED and PUBLICATION_SCHEDULE_ENABLED are true and nothing pauses it.
   if (minute === '37:00') return { workflow: 'publish.yml', inputs: { mode: 'timer' } };
+  // The news refresh, in the Finance repository, with its own secret.
+  if (minute === '41:00') return { workflow: 'news.yml', inputs: {}, repository: SITE_REPOSITORY, secret: 'NEWS_DISPATCH_TOKEN' };
   throw new Error(`timer ${slot}: no workflow is dispatched at this minute`);
 }
+
+/** The name of the secret a firing's dispatch uses. */
+export const secretFor = (slot) => targetFor(slot).secret ?? 'GITHUB_TOKEN';
 
 /** Network errors, 429 and 5xx are retried; any other status is final. */
 export function retryable(status) {
@@ -39,9 +51,9 @@ export function retryable(status) {
 }
 
 export async function dispatchSlot({ token, slot, request = fetch, wait = (ms) => new Promise((r) => setTimeout(r, ms)), log = console }) {
-  const { workflow, inputs } = targetFor(slot);
-  if (!token) throw new Error(`timer ${slot}: the secret GITHUB_TOKEN is not set`);
-  const url = `https://api.github.com/repos/${REPOSITORY}/actions/workflows/${workflow}/dispatches`;
+  const { workflow, inputs, repository = REPOSITORY, secret = 'GITHUB_TOKEN' } = targetFor(slot);
+  if (!token) throw new Error(`timer ${slot}: the secret ${secret} is not set`);
+  const url = `https://api.github.com/repos/${repository}/actions/workflows/${workflow}/dispatches`;
   for (let attempt = 1; ; attempt += 1) {
     let status = 0;
     try {
@@ -75,6 +87,7 @@ export async function dispatchSlot({ token, slot, request = fetch, wait = (ms) =
 
 export default {
   async scheduled(controller, env) {
-    await dispatchSlot({ token: env.GITHUB_TOKEN, slot: slotOf(controller.scheduledTime) });
+    const slot = slotOf(controller.scheduledTime);
+    await dispatchSlot({ token: env[secretFor(slot)], slot });
   },
 };

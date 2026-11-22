@@ -17,7 +17,7 @@ import * as m6 from '../../../pipeline/lib/canonical.mjs';
 const { canonicalJson, sha256Hex } = m6 as unknown as Loose;
 import * as m3 from '../../../pipeline/timer/worker.mjs';
 const worker = m3 as unknown as Loose;
-const { CRON_LINES, dispatchSlot, retryable, slotOf, targetFor } = worker;
+const { CRON_LINES, dispatchSlot, retryable, secretFor, slotOf, targetFor } = worker;
 import * as m4 from '../../../pipeline/bin/issues.mjs';
 const { issueText } = m4 as unknown as Loose;
 
@@ -179,8 +179,26 @@ describe('the Cloudflare timer (21.3, 21.9)', () => {
   };
   afterEach(() => vi.unstubAllGlobals());
 
-  it('has the two cron lines of the conventions', () => {
-    expect(CRON_LINES).toEqual(['17 */4 * * *', '47 2-22/4 * * *']);
+  it('has the two cron lines of the conventions and the news line (P112)', () => {
+    expect(CRON_LINES).toEqual(['17 */4 * * *', '47 2-22/4 * * *', '41 */2 * * *']);
+  });
+
+  it('minute 41 dispatches the Finance news workflow with its own secret; the data firings keep GITHUB_TOKEN', async () => {
+    expect(targetFor('2026-11-22T20:41:00Z')).toEqual({ workflow: 'news.yml', inputs: {}, repository: 'RadMageIRL/finance', secret: 'NEWS_DISPATCH_TOKEN' });
+    expect(secretFor('2026-11-22T20:41:00Z')).toBe('NEWS_DISPATCH_TOKEN');
+    expect(['2026-11-22T20:17:00Z', '2026-11-22T22:47:00Z', '2026-11-22T20:37:00Z'].map(secretFor)).toEqual(['GITHUB_TOKEN', 'GITHUB_TOKEN', 'GITHUB_TOKEN']);
+    const { calls, request } = fake([204]);
+    const r = await dispatchSlot({ token: 'news-tok', slot: '2026-11-22T20:41:00Z', request, wait: noWait, log: quiet });
+    expect(r).toEqual({ slot: '2026-11-22T20:41:00Z', workflow: 'news.yml', status: 204, attempt: 1 });
+    const [c] = calls as Loose[];
+    expect(c?.url).toBe('https://api.github.com/repos/RadMageIRL/finance/actions/workflows/news.yml/dispatches');
+    expect(c?.init.headers.Authorization).toBe('Bearer news-tok');
+    expect(c?.body).toEqual({ ref: 'main', inputs: {} });
+    const none = fake([204]);
+    await expect(dispatchSlot({ token: undefined, slot: '2026-11-22T20:41:00Z', request: none.request, wait: noWait, log: quiet })).rejects.toThrow(/NEWS_DISPATCH_TOKEN is not set/);
+    expect(none.calls.length).toBe(0);
+    // Every cron line routes somewhere: the minute of each line has a target.
+    for (const line of CRON_LINES) expect(() => targetFor(`2026-11-22T22:${line.split(' ')[0]!.padStart(2, '0')}:00Z`)).not.toThrow();
   });
 
   it('turns the scheduled time into the slot: its cron minute, seconds and milliseconds dropped', () => {
@@ -245,12 +263,15 @@ describe('the Cloudflare timer (21.3, 21.9)', () => {
     });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     // Seconds into the minute, as Cloudflare's scheduledTime can be: still the collect slot.
-    await worker.default.scheduled({ scheduledTime: Date.UTC(2026, 10, 20, 20, 17, 4), cron: '17 */4 * * *' }, { GITHUB_TOKEN: 'sec' });
-    await worker.default.scheduled({ scheduledTime: Date.UTC(2026, 10, 20, 22, 47, 3), cron: '47 2-22/4 * * *' }, { GITHUB_TOKEN: 'sec' });
+    const env = { GITHUB_TOKEN: 'sec', NEWS_DISPATCH_TOKEN: 'news' };
+    await worker.default.scheduled({ scheduledTime: Date.UTC(2026, 10, 20, 20, 17, 4), cron: '17 */4 * * *' }, env);
+    await worker.default.scheduled({ scheduledTime: Date.UTC(2026, 10, 20, 22, 47, 3), cron: '47 2-22/4 * * *' }, env);
+    await worker.default.scheduled({ scheduledTime: Date.UTC(2026, 10, 20, 22, 41, 2), cron: '41 */2 * * *' }, env);
     log.mockRestore();
     expect(seen).toEqual([
       { url: 'https://api.github.com/repos/RadMageIRL/finance-data/actions/workflows/collect.yml/dispatches', body: { ref: 'main', inputs: { mode: 'timer', slot: '2026-11-20T20:17:00Z' } }, auth: 'Bearer sec' },
       { url: 'https://api.github.com/repos/RadMageIRL/finance-data/actions/workflows/watch.yml/dispatches', body: { ref: 'main', inputs: { slot: '2026-11-20T22:47:00Z' } }, auth: 'Bearer sec' },
+      { url: 'https://api.github.com/repos/RadMageIRL/finance/actions/workflows/news.yml/dispatches', body: { ref: 'main', inputs: {} }, auth: 'Bearer news' },
     ]);
   });
 });
