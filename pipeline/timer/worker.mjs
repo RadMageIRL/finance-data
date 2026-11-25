@@ -13,10 +13,17 @@
 // dataset), with its own secret NEWS_DISPATCH_TOKEN: the existing fine-grained token for the Finance
 // repository alone with Actions read and write (finance-pages-dispatch, P7). The news firing never
 // uses GITHUB_TOKEN, and collection and the watch never use NEWS_DISPATCH_TOKEN.
+//
+// Timer publication (v0.8 22.6, D2 (c), gate 22; owner decision P113 of 2026-11-25): the cron line
+// 37 */4 * * * dispatches publish.yml of RadMageIRL/finance-data in mode timer, twenty minutes
+// after each collection, with GITHUB_TOKEN. The pause switches stay on GitHub: publish.yml refuses
+// a timer run unless PUBLICATION_ENABLED and PUBLICATION_SCHEDULE_ENABLED are "true" and no
+// publication-verify-failed issue is open, and it ends as a no-op when the accepted dataset is the
+// deployed one.
 
 export const REPOSITORY = 'RadMageIRL/finance-data';
 export const SITE_REPOSITORY = 'RadMageIRL/finance';
-export const CRON_LINES = ['17 */4 * * *', '47 2-22/4 * * *', '41 */2 * * *'];
+export const CRON_LINES = ['17 */4 * * *', '47 2-22/4 * * *', '41 */2 * * *', '37 */4 * * *'];
 const RETRY_WAITS_MS = [5000, 30000];
 
 /**
@@ -33,9 +40,9 @@ export function targetFor(slot) {
   const minute = slot.slice(14, 19);
   if (minute === '17:00') return { workflow: 'collect.yml', inputs: { mode: 'timer', slot } };
   if (minute === '47:00') return { workflow: 'watch.yml', inputs: { slot } };
-  // v0.8 (22.6, D2 (c)): timer publication on the third cron line `37 */4 * * *`, which is not in
-  // CRON_LINES and not deployed before gate 22; publish.yml refuses a timer run unless
-  // PUBLICATION_ENABLED and PUBLICATION_SCHEDULE_ENABLED are true and nothing pauses it.
+  // v0.8 (22.6, D2 (c), P113): timer publication on the cron line `37 */4 * * *`; publish.yml
+  // refuses a timer run unless PUBLICATION_ENABLED and PUBLICATION_SCHEDULE_ENABLED are true and
+  // nothing pauses it.
   if (minute === '37:00') return { workflow: 'publish.yml', inputs: { mode: 'timer' } };
   // The news refresh, in the Finance repository, with its own secret.
   if (minute === '41:00') return { workflow: 'news.yml', inputs: {}, repository: SITE_REPOSITORY, secret: 'NEWS_DISPATCH_TOKEN' };

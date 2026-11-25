@@ -179,8 +179,8 @@ describe('the Cloudflare timer (21.3, 21.9)', () => {
   };
   afterEach(() => vi.unstubAllGlobals());
 
-  it('has the two cron lines of the conventions and the news line (P112)', () => {
-    expect(CRON_LINES).toEqual(['17 */4 * * *', '47 2-22/4 * * *', '41 */2 * * *']);
+  it('has the two cron lines of the conventions, the news line (P112) and the timer publication line (P113)', () => {
+    expect(CRON_LINES).toEqual(['17 */4 * * *', '47 2-22/4 * * *', '41 */2 * * *', '37 */4 * * *']);
   });
 
   it('minute 41 dispatches the Finance news workflow with its own secret; the data firings keep GITHUB_TOKEN', async () => {
@@ -213,9 +213,9 @@ describe('the Cloudflare timer (21.3, 21.9)', () => {
     expect(targetFor('2026-11-20T16:17:00Z')).toEqual({ workflow: 'collect.yml', inputs: { mode: 'timer', slot: '2026-11-20T16:17:00Z' } });
     expect(targetFor('2026-11-20T14:47:00Z')).toEqual({ workflow: 'watch.yml', inputs: { slot: '2026-11-20T14:47:00Z' } });
     expect(() => targetFor('2026-11-20T16:18:00Z')).toThrow(/no workflow/);
-    // v0.8: minute 37 routes to timer publication; the cron line itself is not deployed (CRON_LINES).
+    // v0.8 (P113): minute 37 routes to timer publication, twenty minutes after each collection.
     expect(targetFor('2026-11-20T16:37:00Z')).toEqual({ workflow: 'publish.yml', inputs: { mode: 'timer' } });
-    expect(CRON_LINES.some((l: string) => l.startsWith('37 '))).toBe(false);
+    expect(CRON_LINES.filter((l: string) => l.startsWith('37 '))).toEqual(['37 */4 * * *']);
   });
 
   it('dispatches on main with exactly the inputs, the token as a bearer', async () => {
@@ -267,11 +267,13 @@ describe('the Cloudflare timer (21.3, 21.9)', () => {
     await worker.default.scheduled({ scheduledTime: Date.UTC(2026, 10, 20, 20, 17, 4), cron: '17 */4 * * *' }, env);
     await worker.default.scheduled({ scheduledTime: Date.UTC(2026, 10, 20, 22, 47, 3), cron: '47 2-22/4 * * *' }, env);
     await worker.default.scheduled({ scheduledTime: Date.UTC(2026, 10, 20, 22, 41, 2), cron: '41 */2 * * *' }, env);
+    await worker.default.scheduled({ scheduledTime: Date.UTC(2026, 10, 20, 20, 37, 5), cron: '37 */4 * * *' }, env);
     log.mockRestore();
     expect(seen).toEqual([
       { url: 'https://api.github.com/repos/RadMageIRL/finance-data/actions/workflows/collect.yml/dispatches', body: { ref: 'main', inputs: { mode: 'timer', slot: '2026-11-20T20:17:00Z' } }, auth: 'Bearer sec' },
       { url: 'https://api.github.com/repos/RadMageIRL/finance-data/actions/workflows/watch.yml/dispatches', body: { ref: 'main', inputs: { slot: '2026-11-20T22:47:00Z' } }, auth: 'Bearer sec' },
       { url: 'https://api.github.com/repos/RadMageIRL/finance/actions/workflows/news.yml/dispatches', body: { ref: 'main', inputs: {} }, auth: 'Bearer news' },
+      { url: 'https://api.github.com/repos/RadMageIRL/finance-data/actions/workflows/publish.yml/dispatches', body: { ref: 'main', inputs: { mode: 'timer' } }, auth: 'Bearer sec' },
     ]);
   });
 });
