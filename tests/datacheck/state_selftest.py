@@ -13,9 +13,13 @@ The state store of appendix G and its scenario do not exist yet, so this builds 
              22:17 the same EFFR answer (one body stored once) with the debt source answering 500
              to the request and its three retries (no-change, source-overdue:effr). Expected: every
              state and root check passes (the promoted v0.6 files read by the three rules of 21.1).
+  variants   copies of base that must pass every check: the v0.7 form before the boundary, and
+             request numbers that skip or start above 1 (amendment 2 to v0.8, 20.2, 21.4).
   faults     copies of base with one fault each, and the checks expected to catch it.
   stage-b    a byte copy of the real Stage B store (the v0.6 layout, .git left out): expected to fail
              only T46, T55 and T116, the v0.6 to v0.7 differences (no accepted.json, so every rule is\n             strict); then copies with one fault each.
+             Copies renumbered as amendment 2 to v0.8 allows (a gap, numbers from 2) must fail exactly
+             what the byte copy fails.
   legacy     the T46 reading for a root written before v0.7, with the registry's conventions set
              to v0.7 in memory.
   scenario   a fabricated appendix G folder (steps.json and store/): its collection records, run
@@ -422,13 +426,68 @@ def f_full_fetches_key_missing(d):
     write_state(d, "sched-503-1", "2026-11-19T22:17:31Z")
 
 
+# Amendment 2 to v0.8 (20.2, 21.4, I50): n numbers the requests sent, not the responses; a request
+# without an answer keeps its number and has no record.
+
+
+def v_number_gap(d):
+    """Run C's first debt request, n 2, ended without an answer (20.2): it keeps its number and leaves
+    no record, and the three debt records after it are its retries (17.4). Records 1, 3, 4, 5. The
+    request times are left as they are; the timing of a retry is not what this exercises."""
+    edit_json(d / "runs" / "sched-503-1.json", lambda v: v.update(requests=[r for r in v["requests"] if r["n"] != 2]))
+
+
+def v_numbers_from_2(d):
+    """Run B's request 1 ended without an answer; its retry, request 2, is the run's only record."""
+    edit_json(d / "runs" / "sched-502-1.json", lambda v: v["requests"][0].update(n=2))
+
+
 VARIANTS = [  # copies of base that must pass every check
     ("v07-form-before-boundary", v_v07_form),
+    ("request-numbers-with-a-gap", v_number_gap),
+    ("request-numbers-from-2", v_numbers_from_2),
 ]
 
 
 def f_state_run_old(d):
     write_state(d, "sched-502-1", "2026-11-19T22:17:31Z")
+
+
+def f_number_repeated(d):
+    """20.2 amendment 2: each number used once. Run C's records become 1, 2, 2, 4, 5."""
+    edit_json(d / "runs" / "sched-503-1.json", lambda v: v["requests"][2].update(n=2))
+
+
+def f_numbers_falling(d):
+    """20.2 amendment 2: rising strictly in request order. Run C's records become 1, 3, 2, 4, 5."""
+    def fn(v):
+        v["requests"][1]["n"], v["requests"][2]["n"] = 3, 2
+    edit_json(d / "runs" / "sched-503-1.json", fn)
+
+
+def f_number_zero(d):
+    edit_json(d / "runs" / "sched-502-1.json", lambda v: v["requests"][0].update(n=0))
+
+
+def f_number_negative(d):
+    edit_json(d / "runs" / "sched-502-1.json", lambda v: v["requests"][0].update(n=-1))
+
+
+def f_number_text(d):
+    edit_json(d / "runs" / "sched-503-1.json", lambda v: v["requests"][1].update(n="2"))
+
+
+def f_number_true(d):
+    edit_json(d / "runs" / "sched-502-1.json", lambda v: v["requests"][0].update(n=True))
+
+
+def f_number_fraction(d):
+    """n 1.5 in otherwise canonical bytes: canonical JSON has no fractions (7), so the record is not
+    readable and the checks that need it lose it."""
+    p = d / "runs" / "sched-502-1.json"
+    b = p.read_bytes()
+    assert b.count(b'"n":1,"requested_at"') == 1
+    p.write_bytes(b.replace(b'"n":1,"requested_at"', b'"n":1.5,"requested_at"'))
 
 
 FAULTS = [  # name, function, checks that must FAIL, checks that may also FAIL
@@ -465,6 +524,13 @@ FAULTS = [  # name, function, checks that must FAIL, checks that may also FAIL
     ("full-fetches-missing-after-boundary", f_full_fetches_key_missing, {"T116"}, set()),
     ("promotion-body-not-stored", f_promotion_body_not_stored, {"ST10"}, set()),
     ("promotion-added-without-bodies", f_promotion_added_without_bodies, {"ST13"}, set()),
+    ("request-number-repeated", f_number_repeated, {"ST9"}, set()),
+    ("request-numbers-falling", f_numbers_falling, {"ST9"}, set()),
+    ("request-number-zero", f_number_zero, {"ST9"}, set()),
+    ("request-number-negative", f_number_negative, {"ST9"}, set()),
+    ("request-number-text", f_number_text, {"ST9"}, set()),
+    ("request-number-true", f_number_true, {"ST9"}, set()),
+    ("request-number-fraction", f_number_fraction, {"ST9"}, {"ST11", "ST13"}),  # unreadable: its run record lacks it (ST11), run C's month sum counts it (ST13)
 ]
 
 
@@ -532,6 +598,62 @@ def sb_null_root(d):
     edit_json(d / "state" / "STATE.json", lambda v: v.update(root=None))
 
 
+def sb_renumber(d, mapping):
+    """Gives Stage B responses new request numbers, old to new: the pair responses/<n>-<host>.bin and
+    .json is renamed (zero-padded as Stage B wrote them) and the record's n set to the new number."""
+    rdir = d / SB / "responses"
+    moves = [(p, new) for old, new in mapping.items() for p in sorted(rdir.glob(f"{old:03d}-*"))]
+    assert len(moves) == 2 * len(mapping), moves  # a .bin and a .json for each number
+    staged = [(p.rename(p.with_name("renumber-" + p.name)), new) for p, new in moves]
+    for p, new in staged:
+        q = p.with_name(f"{new:03d}" + p.name[len("renumber-") + 3:])
+        p.rename(q)
+        if q.suffix == ".json":
+            edit_json(q, lambda v: v.update(n=new))
+
+
+def sbv_gap(d):
+    """Request 4 had no answer; its retry is request 5: the files are 001, 002, 003 and 005."""
+    sb_renumber(d, {4: 5})
+
+
+def sbv_from_2(d):
+    """Request 1 had no answer: the files are 002 to 005."""
+    sb_renumber(d, {4: 5, 3: 4, 2: 3, 1: 2})
+
+
+STAGE_B_VARIANTS = [  # copies of the Stage B store that must fail exactly what the byte copy fails (amendment 2 to v0.8, 20.2)
+    ("request-numbers-with-a-gap", sbv_gap),
+    ("request-numbers-from-2", sbv_from_2),
+]
+
+
+def sb_number_repeated(d):
+    """Two responses of two hosts numbered 1 (20.2 amendment 2: one counter, each number used once)."""
+    sb_renumber(d, {2: 1})
+
+
+def sb_number_zero(d):
+    sb_renumber(d, {1: 0})
+
+
+def sb_numbers_falling(d):
+    """Requests 1 and 2 swap numbers: the number order contradicts the request (time) order."""
+    sb_renumber(d, {1: 2, 2: 1})
+
+
+def sb_number_text(d):
+    edit_json(next((d / SB / "responses").glob("002-*.json")), lambda v: v.update(n="2"))
+
+
+def sb_number_true(d):
+    edit_json(d / SB / "responses" / "001-markets.newyorkfed.org.json", lambda v: v.update(n=True))
+
+
+def sb_number_negative(d):
+    edit_json(d / SB / "responses" / "001-markets.newyorkfed.org.json", lambda v: v.update(n=-1))
+
+
 STAGE_B_FAULTS = [
     ("record-extra-field", sb_record_extra, {"SB7"}, set()),
     ("record-ten-fields", sb_record_ten_fields, {"SB7"}, set()),
@@ -541,6 +663,12 @@ STAGE_B_FAULTS = [
     ("manifest-sha", sb_manifest_sha, {"SB5"}, set()),
     ("csv-crlf", sb_csv_crlf, {"SB8", "T117"}, {"T37", "T62", "T57", "T88", "T89", "T90", "T91", "T92", "T93", "T66", "T67", "T68"}),
     ("null-root", sb_null_root, {"SB1", "SB9"}, {"SB5"}),
+    ("request-number-repeated", sb_number_repeated, {"SB7"}, set()),
+    ("request-number-zero", sb_number_zero, {"SB7"}, set()),
+    ("request-numbers-falling", sb_numbers_falling, {"SB7"}, set()),
+    ("request-number-text", sb_number_text, {"SB7"}, set()),
+    ("request-number-true", sb_number_true, {"SB7"}, set()),
+    ("request-number-negative", sb_number_negative, {"SB7"}, set()),
 ]
 
 
@@ -894,6 +1022,11 @@ def main(argv):
         jobs.append((name, ["--state", str(d)], out / "faults" / f"{name}.log"))
     sbb = build_stage_b(out / "stage-b")
     jobs.append(("stage-b", ["--state", str(sbb)], out / "stage-b.log"))
+    for name, fn in STAGE_B_VARIANTS:
+        d = out / "stage-b-variants" / name
+        shutil.copytree(sbb, d)
+        fn(d)
+        jobs.append(("sbv:" + name, ["--state", str(d)], out / "stage-b-variants" / f"{name}.log"))
     for name, fn, _, _ in STAGE_B_FAULTS:
         d = out / "stage-b-faults" / name
         shutil.copytree(sbb, d)
@@ -939,6 +1072,10 @@ def main(argv):
     code, sb_fails, aborted, summ = results["stage-b"]
     expect("stage-b: a byte copy of the real Stage B store (no accepted.json, so strict) fails only the v0.6 to v0.7 differences T46, T55 and T116",
            sb_fails == {"T46", "T55", "T116"} and not aborted, f"{summ}; FAIL {sorted(sb_fails)}")
+    for name, _ in STAGE_B_VARIANTS:
+        code, got, aborted, summ = results["sbv:" + name]
+        expect(f"stage-b variant {name}: fails exactly what the byte copy fails (20.2 amendment 2: numbers from 1, each once, gaps allowed)",
+               got == sb_fails and not aborted, f"{summ}; FAIL {sorted(got)}; the byte copy fails {sorted(sb_fails)}")
     for name, _, must, may in STAGE_B_FAULTS:
         code, got, aborted, summ = results["sb:" + name]
         new = got - sb_fails

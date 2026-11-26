@@ -116,12 +116,40 @@ export async function release({ api, info, assets }) {
 /** The inputs of the Finance `pages.yml` dispatch (22.6 job 3, 22.8). */
 export const dispatchInputs = (info) => ({ mode: 'data', tag: info.tag, snapshot: info.dataset.snapshot, manifest_sha256: info.dataset.manifest_sha256, site_commit: info.site_commit, expected_current: info.expected_current, dry_run: 'false' });
 
+/** The waits in seconds before V3's retries of a transient file fetch failure (22.5, amendment 2). */
+export const V3_RETRY_WAITS = [2, 4, 8];
+
+/**
+ * A transient failure of a V3 fetch (22.5, amendment 2): a network error or timeout, or the status
+ * 408, 429 or 500 to 599. Any other status is not retried, and neither is a SHA-256 mismatch.
+ */
+export const v3Transient = (r) => !r.ok && (r.network === true || r.status === 408 || r.status === 429 || (r.status >= 500 && r.status <= 599));
+
+/**
+ * V3's `get` over a fetch function: { ok: true, status, bytes } for a 2xx with its whole body,
+ * { ok: false, status } for any other status, { ok: false, network: true } when the request or
+ * its body fails or takes longer than `timeoutMs` (60 seconds, 22.5). Never throws.
+ */
+export const v3Get = (fetchImpl = fetch, timeoutMs = 60_000) => async (url) => {
+  try {
+    const r = await fetchImpl(url, { cache: 'no-store', headers: { 'User-Agent': 'RadMage Finance publication' }, signal: AbortSignal.timeout(timeoutMs) });
+    if (!r.ok) {
+      await r.body?.cancel().catch(() => {});
+      return { ok: false, status: r.status };
+    }
+    return { ok: true, status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
+  } catch {
+    return { ok: false, network: true };
+  }
+};
+
 /**
  * V3 (22.5) at one address: the manifest until its bytes hash to the dataset's, then every file
- * the manifest and its snapshot name. `get(url)` returns { ok, bytes } and never throws. Returns
- * { passed, problems }.
+ * the manifest and its snapshot name, each retried after the `retryWaits` on a transient failure
+ * only (amendment 2); a SHA-256 mismatch fails the file at once. `get(url)` returns { ok, status,
+ * bytes } or { ok: false, network: true } and never throws. Returns { passed, problems }.
  */
-export async function v3At({ base, dataset, get, sleep, attempts = 31 }) {
+export async function v3At({ base, dataset, get, sleep, attempts = 31, retryWaits = V3_RETRY_WAITS }) {
   let manifestBytes = null;
   for (let i = 0; i < attempts; i += 1) {
     const r = await get(`${base}manifest.json`);
@@ -138,8 +166,17 @@ export async function v3At({ base, dataset, get, sleep, attempts = 31 }) {
   if (manifest.rules) refs.push(manifest.rules.registry, manifest.rules.holidays, manifest.rules.notice, ...manifest.rules.registry_versions);
   const problems = [];
   for (const ref of refs) {
-    const r = await get(`${base}${ref.path}`);
-    if (!r.ok || sha256Hex(r.bytes) !== ref.sha256) problems.push(`${ref.path} does not match`);
+    const url = `${base}${ref.path}`;
+    let r = await get(url);
+    let retries = 0;
+    while (v3Transient(r) && retries < retryWaits.length) {
+      await sleep(retryWaits[retries]);
+      retries += 1;
+      r = await get(url);
+    }
+    const tried = retries ? ` after ${retries} ${retries === 1 ? 'retry' : 'retries'}` : '';
+    if (!r.ok) problems.push(`${ref.path} ${r.network === true ? 'failed with a network error' : `answered status ${r.status ?? 'unknown'}`}${tried}`);
+    else if (sha256Hex(r.bytes) !== ref.sha256) problems.push(`${ref.path} does not match${tried}`);
   }
   return { passed: problems.length === 0, problems };
 }
@@ -249,14 +286,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
         run = runs.find((r_) => r_.display_title === name) ?? null;
         if (!(run && run.status === 'completed')) await sleep(30);
       }
-      const get = async (url) => {
-        try {
-          const r_ = await fetch(url, { cache: 'no-store', headers: { 'User-Agent': 'RadMage Finance publication' } });
-          return r_.ok ? { ok: true, bytes: Buffer.from(await r_.arrayBuffer()) } : { ok: false };
-        } catch {
-          return { ok: false };
-        }
-      };
+      const get = v3Get();
       let v3 = null;
       if (run?.status === 'completed' && run.conclusion === 'success') {
         const a = await v3At({ base: 'https://radmagelabs.com/finance/data/econ/', dataset: info.dataset, get, sleep });

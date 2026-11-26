@@ -37,6 +37,9 @@ export function makeLiveTransport({ registry, request = httpsRequest, limits = L
     }
     const sent = Object.fromEntries(Object.entries(headers ?? {}).filter(([k]) => ALLOWED_HEADERS.includes(k)));
     const requestedAt = clock().toISOString().slice(0, 19) + 'Z';
+    // Numbering (20.2, amendment 2): every request sent takes the next number, answered or not.
+    // Only an answered request is recorded, so a timeout, a connection failure or an answer over
+    // the size cap leaves a gap in the record numbers; a retry that follows takes the next number.
     n += 1;
     const index = n;
     let done = false;
@@ -60,6 +63,7 @@ export function makeLiveTransport({ registry, request = httpsRequest, limits = L
         chunks.push(chunk);
       });
       res.on('end', () => {
+        if (done) return; // ended already (timeout, size cap): never recorded afterwards (20.2)
         const bytes = Buffer.concat(chunks);
         const kept = Object.fromEntries(KEPT.filter((k) => res.headers[k] !== undefined).map((k) => [k, String(res.headers[k])]));
         const out = { status: res.statusCode, headers: kept, bytes };

@@ -335,19 +335,27 @@ def run_stage_b(ck, st, store, desc):
     p, n_resp = [], 0
     host_group, group_host = _registry_hosts(st)
     for x in folders:
-        recs = {}
+        recs, names = {}, {}
         for f in store.under(f"unpublished/{x}/responses/"):
             name = f.rsplit("/", 1)[1]
             mt = RX_STAGE_B_RESPONSE.fullmatch(name)
             if not mt:
                 p.append(f"{f}: not <n>-<host>.bin or <n>-<host>.json (20.2)")
                 continue
-            recs.setdefault((int(mt.group(1)), mt.group(2)), {})[mt.group(3)] = f[:-len(mt.group(3)) - 1]  # reading: <n> may be zero-padded (Stage B wrote 001)
+            key = (int(mt.group(1)), mt.group(2))
+            recs.setdefault(key, {})[mt.group(3)] = f[:-len(mt.group(3)) - 1]  # reading: <n> may be zero-padded (Stage B wrote 001)
+            names.setdefault(key, set()).add(f[:-len(mt.group(3)) - 1])
         rr, _ = store.load(ck, f"unpublished/{x}/archive/state/run-records/{x}.json")
         started = rr.get("started_at") if isinstance(rr, dict) else None
-        ns = sorted(n for n, _ in recs)
-        if ns != list(range(1, len(ns) + 1)):
-            p.append(f"unpublished/{x}/responses: request numbers {ns[:6]} are not 1 to {len(ns)}")
+        # amendment 2 to v0.8 (20.2, I50): the file numbers come from the run's one request counter, so they rise strictly
+        # from 1, each used once (by one response of one host), and may skip. Reading: the files have no order of their
+        # own, so their request order is their number order; the time order below is what can contradict it.
+        numbered = sorted((n, base) for (n, _), bases in names.items() for base in bases)
+        for i, why in ck.request_number_problems([n for n, _ in numbered]):
+            p.append(f"{numbered[i][1]}: {why}")
+        for n, base in numbered:
+            if n < 1:
+                p.append(f"{base}: number {n} in the file name is not a request number from 1 (20.2)")
         prev_t = None
         hosts = set()
         for (n, host), kinds in sorted(recs.items()):
@@ -375,7 +383,7 @@ def run_stage_b(ck, st, store, desc):
             want = {group_host[g] for g in ck.requested_groups(st, rr)}
             if want != hosts:
                 p.append(f"unpublished/{x}: requests to {sorted(hosts)}, the run record's outcomes request the groups of {sorted(want)}")
-    check("SB7 every saved response has its record with exactly the twelve fields of 20.2 (v0.7, F1), n and host those of its file name, bytes and sha256 those of its body; requests numbered from 1, in time order, to the registered hosts of the groups the run requested (18, 20.2)", p,
+    check("SB7 every saved response has its record with exactly the twelve fields of 20.2 (v0.7, F1), n and host those of its file name, bytes and sha256 those of its body; request numbers from 1, each used once, gaps allowed (amendment 2), in time order, to the registered hosts of the groups the run requested (18, 20.2)", p,
           f"{n_resp} response(s)")
 
     # SB8: line endings (21.2 applies to every text file the pipeline writes; bodies exempt)
@@ -740,10 +748,14 @@ def run_v07(ck, st, store, desc):
             p.append(f"{f}: a collection with outcome {v.get('outcome')}")
         if ck.is_time(v.get("started_at")) and ck.is_time(v.get("ended_at")) and v["ended_at"] < v["started_at"]:
             p.append(f"{f}: ended_at before started_at")
-        for i, r in enumerate(v.get("requests") or []):
-            for why in ck.response_record_problems(r, None, i + 1):
+        reqs = v.get("requests") if isinstance(v.get("requests"), list) else []
+        for i, r in enumerate(reqs):
+            for why in ck.response_record_problems(r):
                 p.append(f"{f} requests[{i}]: {why}")
-    check("ST9 every runs/<run id>.json is a canonical rmf.econ.collection/1 record named by its run, with exactly the twelve fields of 20.2 in every request (numbered from 1), an operation exactly when the trigger is operation and then no request, outcomes as 14.1 and 21.4 give them (20.2, 21.4)", p,
+        # amendment 2 to v0.8 (20.2, 21.4, I50): n numbers the requests sent; the records, in request order, rise strictly from 1 and may skip
+        for i, why in ck.request_number_problems([r.get("n") if isinstance(r, dict) else None for r in reqs]):
+            p.append(f"{f} requests[{i}]: {why}")
+    check("ST9 every runs/<run id>.json is a canonical rmf.econ.collection/1 record named by its run, with exactly the twelve fields of 20.2 in every request (numbers integers of at least 1, rising strictly in request order, each used once, gaps allowed: amendment 2), an operation exactly when the trigger is operation and then no request, outcomes as 14.1 and 21.4 give them (20.2, 21.4)", p,
           f"{len(records)} record(s)")
 
     # ST10: request bodies and responses/ (21.2)

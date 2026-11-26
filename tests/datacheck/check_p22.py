@@ -1429,6 +1429,31 @@ def response_record_problems(rec, body=None, n=None, host=None):
     return p
 
 
+def request_number_problems(ns):
+    """20.2, 21.4 (amendment 2 to v0.8, I50): n numbers the requests sent, not the responses, so in
+    request order the numbers of a run's records rise strictly from 1, each used once, and may skip
+    the numbers of requests without an answer (records 1, 3 and 4 are valid when request 2 timed out).
+    ns: the n of every record of one run, in request order. Returns (position in ns, problem) pairs:
+    a number two records share, and a number not above that of the record before it. A value that
+    is not an integer of at least 1 is the record's own problem (response_record_problems, which
+    every caller runs on each record) and is passed over here; the next record is compared with the
+    nearest earlier one whose number is valid (reading: the text names "the record before it" only
+    for valid numbers). Reading: the first record may have any number from 1 (request 1 without an
+    answer, its retry answered as request 2, gives records from 2); the text refuses only the cases
+    it lists, and nothing it records counts the requests without an answer, so a gap is never checked."""
+    p, seen, prev = [], set(), None
+    for i, n in enumerate(ns):
+        if type(n) is not int or n < 1:
+            continue
+        if n in seen:
+            p.append((i, f"n {n} is also the number of an earlier record (20.2 amendment 2: each number used once)"))
+        elif prev is not None and n <= prev:
+            p.append((i, f"n {n} is not above {prev}, the number of the record before it (20.2 amendment 2: rising strictly in request order)"))
+        seen.add(n)
+        prev = n
+    return p
+
+
 def section_selftests_v07(st):
     """C7 (14.2, 14.3), C8 (17.3 weekly full fetch), C9 (20.2 response records): this checker's
     v0.7 rules on fixed cases, the boundaries included."""
@@ -1528,7 +1553,30 @@ def section_selftests_v07(st):
     crlf = b'[\r\n1]'
     conv = response_record_problems(dict(good, bytes=len(crlf), sha256=sha256_hex(b'[\n1]')), crlf)
     expect("a body converted to CRLF is named 'line endings converted'", any("line endings converted" in x for x in conv), True)
-    check("C9 response record self-test (v0.7, F1): exactly the twelve fields of 20.2, each present (header fields null allowed, never absent); n, status and bytes integers (a string, a boolean or a fraction refused), the others text; an extra field (base, headers, error) refused; bytes and sha256 must match the body, with the line endings diagnosis of 21.2", p)
+
+    # 20.2, 21.4 (amendment 2 to v0.8, I50): the numbers of a run's records, in request order, as ST9 reads them
+    def numbering(ns):
+        per_record = [i for i, x in enumerate(ns) if response_record_problems(dict(good, n=x), body)]
+        return sorted(set(per_record) | {i for i, _ in request_number_problems(ns)})
+
+    expect("records 1, 2, 3", numbering([1, 2, 3]), [])
+    expect("records 1, 3, 4 (request 2 had no answer)", numbering([1, 3, 4]), [])
+    expect("records 2, 3 (request 1 had no answer, its retry is request 2)", numbering([2, 3]), [])
+    expect("one record numbered 7", numbering([7]), [])
+    expect("no record (every request unanswered, or none sent)", numbering([]), [])
+    expect("records 1, 1 (a number used twice)", numbering([1, 1]), [1])
+    expect("records 1, 2, 1 (a number used again later)", numbering([1, 2, 1]), [2])
+    expect("records 2, 1 (falling)", numbering([2, 1]), [1])
+    expect("records 1, 4, 3 (not above the record before it)", numbering([1, 4, 3]), [2])
+    expect("records 0, 1 (zero)", numbering([0, 1]), [0])
+    expect("records 1, -2 (negative)", numbering([1, -2]), [1])
+    expect("records 1, 1.5 (not an integer)", numbering([1, 1.5]), [1])
+    expect("records 1, '2' (text)", numbering([1, "2"]), [1])
+    expect("records True, 2 (a boolean)", numbering([True, 2]), [0])
+    expect("records 1, None (null)", numbering([1, None]), [1])
+    expect("records 3, 1.5, 2: the next valid number is compared with 3", numbering([3, 1.5, 2]), [1, 2])
+    expect("request_number_problems passes over invalid values (the record check names them)", request_number_problems([0, -1, 1.5, "2", True, None]), [])
+    check("C9 response record self-test (v0.7, F1): exactly the twelve fields of 20.2, each present (header fields null allowed, never absent); n, status and bytes integers (a string, a boolean or a fraction refused), the others text; an extra field (base, headers, error) refused; bytes and sha256 must match the body, with the line endings diagnosis of 21.2; amendment 2 to v0.8 (I50): a run's record numbers rise strictly from 1 in request order and may skip (1, 3, 4 and 2, 3 valid; a repeated, falling, zero, negative, fractional, text or boolean number refused) (20.2, 21.4)", p)
 
 
 def section_selftests_v04(st):
@@ -2122,6 +2170,14 @@ def section_schemas_v07_probes(st, probe, t, sha):
     probe("a scheduled record naming an operation (21.4: operation null unless trigger operation)", "collection", dict(cr, operation="review"), False, "ST9", bucket=p6)
     probe("outcome promoted outside the promotion (21.4)", "collection", dict(cr, outcome="promoted"), False, "ST9", bucket=p6)
     probe("an operation record with requests (21.4: empty for an operation)", "collection", dict(op, requests=[resp]), False, "ST9", bucket=p6)
+    # 20.2, 21.4 (amendment 2 to v0.8, I50): n numbers the requests sent, so the records' numbers rise strictly from 1 and may skip
+    numbered = lambda *ns: dict(cr, requests=[dict(resp, n=x) for x in ns])
+    probe("requests numbered 1, 3 and 4 (20.2 amendment 2: request 2 had no answer and keeps its number)", "collection", numbered(1, 3, 4), True, bucket=p6)
+    probe("requests numbered 2 and 3 (20.2 amendment 2: request 1 had no answer, its retry is request 2)", "collection", numbered(2, 3), True, bucket=p6)
+    probe("requests numbered 1 and 1 (20.2 amendment 2: each number used once)", "collection", numbered(1, 1), False, "ST9", bucket=p6)
+    probe("requests numbered 2 and 1 (20.2 amendment 2: rising strictly in request order)", "collection", numbered(2, 1), False, "ST9", bucket=p6)
+    for x, why in ((-1, "n -1"), (1.5, "n 1.5"), (True, "n true")):
+        probe(f"requests numbered 1 and then {why} (20.2 amendment 2: an integer of at least 1)", "collection", numbered(1, x), False, bucket=p6)
     probe("freshness for one series only (21.4: every registered series, in registry order)", "collection", dict(cr, freshness=cr["freshness"][:1]), False, "ST14", bucket=p6)
     probe("freshness in reverse registry order (21.4)", "collection", dict(cr, freshness=list(reversed(cr["freshness"]))), False, "ST14", bucket=p6)
     return p6

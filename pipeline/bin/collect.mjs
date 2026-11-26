@@ -174,7 +174,7 @@ export function writeStore({ root, state, run, record, bodies, push, message, cl
  * empty, Stage B or unpromoted store. Validation by the independent checker comes before any
  * write; any failure before the push leaves the store as it was.
  */
-export async function collectStageC({ root, state, run, trigger = 'schedule', push = false, env = process.env, transportRequest = undefined, clock = nowIso, wait = sleep, healthFacts = null, factsUnavailable = false, publicationFacts = null, publicationFactsUnavailable = false, validate = validateRoot, validateStore = null, transportClock = () => new Date(), inputs = loadInputs() }) {
+export async function collectStageC({ root, state, run, trigger = 'schedule', push = false, env = process.env, transportRequest = undefined, clock = nowIso, wait = sleep, healthFacts = null, factsUnavailable = false, publicationFacts = null, publicationFactsUnavailable = false, validate = validateRoot, validateStore = null, transportClock = () => new Date(), transportLimits = undefined, inputs = loadInputs() }) {
   const layout = storeLayout(state);
   if (layout !== 'v0.7') throw new Error(`state store refused: Stage C needs a promoted v0.7 store, found ${layout}`);
   const verified = verifyStateV2(state);
@@ -204,7 +204,7 @@ export async function collectStageC({ root, state, run, trigger = 'schedule', pu
   }
   const recorded = [];
   const record = (e) => recorded.push(e);
-  const transport = makeLiveTransport({ registry: inputs.registry, record, ...(transportRequest ? { request: transportRequest } : {}), clock: transportClock });
+  const transport = makeLiveTransport({ registry: inputs.registry, record, ...(transportRequest ? { request: transportRequest } : {}), ...(transportLimits ? { limits: transportLimits } : {}), clock: transportClock });
   const fetch = adapterFetch({ registry: inputs.registry, transport, wait });
   const result = await runCollector({ root, mode: 'live', activationFacts: facts, registry: inputs.registry, schemas: inputs.schemas, sourceTable: inputs.sourceTable, holidays: inputs.holidays, now, run: { id: run, attempt: 1, trigger, collector_commit: env.GITHUB_SHA ?? '0'.repeat(40) }, fetch, wait, healthFacts: healthFacts ? { ...healthFacts, manifest: accepted } : null, extraAlerts });
   // Provenance (20.2): every body must match its recorded hash before anything is kept.
