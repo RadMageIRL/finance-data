@@ -11,11 +11,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Loose = Record<string, any>;
 import * as m1 from '../../../pipeline/lib/publication.mjs';
-const { artifactArchive, artifactSha256, artifactSummary, deployedDataset, disallowedPaths, fixPost, neverPublicWithdrawn, nextLog, nothingToPublish, readArtifactArchive, reasonProblems, releaseAssets, releaseTag, sha256Sums, verifiedPairs } = m1 as unknown as Loose;
+const { compareReleases, newestRelease, ownLogProblem, artifactArchive, artifactSha256, artifactSummary, deployedDataset, disallowedPaths, fixPost, neverPublicWithdrawn, nextLog, nothingToPublish, readArtifactArchive, reasonProblems, releaseAssets, releaseTag, sha256Sums, verifiedPairs } = m1 as unknown as Loose;
 import * as m2 from '../../../pipeline/lib/site-build.mjs';
 const { checkRelease, currentText, deployRefusal, deployedState, inputRefusal, runName } = m2 as unknown as Loose;
 import * as m5 from '../../../pipeline/bin/publish.mjs';
-const { assemble, COMPAT_DATASET, COMPAT_LINE, dispatchInputs, isCompatDataset, previousReleaseTag, release, releaseBody, reportPlan, v3At } = m5 as unknown as Loose;
+const { assemble, failedAfterGates, COMPAT_DATASET, COMPAT_LINE, dispatchInputs, isCompatDataset, previousReleaseTag, release, releaseBody, reportPlan, v3At } = m5 as unknown as Loose;
 import * as m6 from '../../../pipeline/bin/state-scenario.mjs';
 const { runStateScenario } = m6 as unknown as Loose;
 import * as m4 from '../../../pipeline/bin/publication-facts.mjs';
@@ -228,8 +228,8 @@ describe('the collection run reads the publication facts (22.4)', () => {
       seen.push(url);
       const json = (v: unknown) => ({ ok: true, status: 200, json: async () => v });
       if (url.includes('/finance-data/releases?')) return json(over.releases ?? [
-        { tag_name: B, draft: false, created_at: '2026-11-24T17:00:00Z', assets: [{ name: 'deployments.json', url: 'https://api.github.com/assets/b' }] },
-        { tag_name: A, draft: false, created_at: '2026-11-24T15:00:00Z', assets: [{ name: 'deployments.json', url: 'https://api.github.com/assets/a' }] },
+        { tag_name: B, id: 22, draft: false, created_at: '2026-11-24T17:00:00Z', published_at: '2026-11-24T17:00:00Z', assets: [{ name: 'deployments.json', url: 'https://api.github.com/assets/b' }] },
+        { tag_name: A, id: 11, draft: false, created_at: '2026-11-24T15:00:00Z', published_at: '2026-11-24T15:00:00Z', assets: [{ name: 'deployments.json', url: 'https://api.github.com/assets/a' }] },
         { tag_name: 'v0.2.0', draft: false, created_at: '2026-11-25T00:00:00Z', assets: [] },
       ]);
       if (url === 'https://api.github.com/assets/b') return { ok: true, status: 200, arrayBuffer: async () => Buffer.from(canonicalJson(logB)) };
@@ -242,7 +242,7 @@ describe('the collection run reads the publication facts (22.4)', () => {
   };
   const read = (f: Loose) => readCollectFacts({ token: 't', repository: 'RadMageIRL/finance-data', siteRepository: 'RadMageIRL/finance', fetchImpl: f.fetchImpl });
 
-  it('takes the newest data release by creation time with its run outcomes', async () => {
+  it('takes the newest data release by publication time with its run outcomes', async () => {
     const f = await read(fake());
     expect(f.newestLog).toEqual(logB);
     expect(f.newestRun).toEqual({ completed: true, siteConclusion: 'success', verifyConclusion: 'success' });
@@ -255,6 +255,55 @@ describe('the collection run reads the publication facts (22.4)', () => {
     expect((await read(fake({ status: 'in_progress' }))).newestRun).toEqual({ completed: false });
     expect(await read(fake({ releases: [{ tag_name: 'v0.2.0', draft: false, created_at: '2026-11-25T00:00:00Z', assets: [] }] }))).toEqual({ newestLog: null, newestRun: null });
     await expect(read(fake({ run: 'refuse' }))).rejects.toThrow(/answered 403/);
+  });
+
+  // The 2026-11-28 04:37Z case (amendment 3, P115): releases tagged on one commit share
+  // created_at (GitHub's date of the tagged commit), and the API lists them newest first.
+  const COMMIT_DATE = '2026-11-26T02:12:03Z';
+  const D = releaseTag(S2, 33, 1);
+  const logD = nextLog(logA, 'passed', entry(S2, H2, 33));
+  const logs: Record<string, Loose> = { [A]: logA, [B]: logB, [D]: logD };
+  const relA: Loose = { tag_name: A, id: 460846896, published_at: '2026-11-27T16:38:49Z' };
+  const relB: Loose = { tag_name: B, id: 461190274, published_at: '2026-11-28T00:38:48Z' };
+  const relD: Loose = { tag_name: D, id: 461303156, published_at: '2026-11-28T04:38:45Z' };
+  const tied = (list: Loose[], over: Record<string, Loose> = logs) => async (url: string) => {
+    const json = (v: unknown) => ({ ok: true, status: 200, json: async () => v });
+    if (url.includes('/finance-data/releases?')) return json(list.map((r) => ({ draft: false, created_at: COMMIT_DATE, assets: [{ name: 'deployments.json', url: `https://api.github.com/assets/${r.tag_name}` }], ...r })));
+    const a = /\/assets\/(data-.+)$/.exec(url);
+    if (a) return { ok: true, status: 200, arrayBuffer: async () => Buffer.from(canonicalJson(over[a[1]!])) };
+    if (/\/actions\/runs\/\d+$/.test(url)) return json({ status: 'completed' });
+    if (/\/actions\/runs\/\d+\/jobs/.test(url)) return json({ jobs: [{ name: 'verify', conclusion: 'success' }] });
+    if (url.includes('/finance/actions/workflows/pages.yml/runs')) return json({ workflow_runs: list.map((r) => ({ display_title: `pages data x y ${r.tag_name}`, status: 'completed', conclusion: 'success' })) });
+    return { ok: false, status: 500 };
+  };
+
+  it('takes the newest release by published_at when several releases are tagged on one commit and share created_at', async () => {
+    // Newest first, as the API lists them: the created_at sort took the last of the tie, the oldest.
+    expect((await read({ fetchImpl: tied([relB, relA]) })).newestLog).toEqual(logB);
+    expect((await read({ fetchImpl: tied([relA, relB]) })).newestLog).toEqual(logB);
+    expect((await read({ fetchImpl: tied([relD, relB, relA]) })).newestLog).toEqual(logD);
+    expect(previousReleaseTag(await read({ fetchImpl: tied([relB, relA]) }))).toBe(B);
+  });
+
+  it('breaks identical published_at timestamps by the higher numeric release id, in any listing order', async () => {
+    const same = (id: number, tag: string) => ({ tag_name: tag, id, published_at: '2026-11-28T00:38:48Z' });
+    expect((await read({ fetchImpl: tied([same(9, B), same(5, A)]) })).newestLog).toEqual(logB);
+    expect((await read({ fetchImpl: tied([same(5, A), same(9, B)]) })).newestLog).toEqual(logB);
+    expect((await read({ fetchImpl: tied([same(5, B), same(9, A)]) })).newestLog).toEqual(logA);
+    // Numeric, not text: id 10 is newer than id 9.
+    expect(newestRelease([same(9, A), same(10, B)]).tag_name).toBe(B);
+    expect(compareReleases(same(10, B), same(9, A))).toBeGreaterThan(0);
+    expect(newestRelease([])).toBeNull();
+  });
+
+  it('throws on a release without a valid published_at or id, and on a newest log that does not end with its own entry', async () => {
+    const { published_at: _p, ...noTime } = relB;
+    await expect(read({ fetchImpl: tied([noTime, relA]) })).rejects.toThrow(/no valid published_at/);
+    await expect(read({ fetchImpl: tied([{ ...relB, id: '461190274' }, relA]) })).rejects.toThrow(/no valid numeric id/);
+    await expect(read({ fetchImpl: tied([{ ...relB, published_at: '2026-11-28 00:38:48' }, relA]) })).rejects.toThrow(/no valid published_at/);
+    await expect(read({ fetchImpl: tied([relB, relA], { ...logs, [B]: logA }) })).rejects.toThrow(/does not end with its own entry/);
+    expect(ownLogProblem(B, logB)).toBeNull();
+    expect(ownLogProblem(B, { deployments: [] })).toMatch(/ends with nothing/);
   });
 });
 
@@ -307,6 +356,48 @@ describe('the publication workflow jobs (22.6)', () => {
     expect(run({ mode: 'redeploy', target: { dataset: accepted, site_commit: 'a'.repeat(40) }, facts: facts({ completed: true, siteConclusion: 'failure', verifyConclusion: null }) }).outcome).toBe('refused-gate');
     expect(run({ validatePublication: () => ({ pass: 1, fail: 2, skip: 0, failures: ['FAIL P1 x'] }) })).toMatchObject({ outcome: 'refused-v2', problems: ['V2c: 2 failure(s)', 'FAIL P1 x'] });
     expect(run({ validateState: () => ({ pass: 1, fail: 1, skip: 0, failures: [] }) }).outcome).toBe('refused-v2');
+  });
+
+  it('never publishes the deployed snapshot twice: no-op from releases sharing created_at, and refuses when the log and the site disagree (amendment 3)', async () => {
+    // Two releases tagged on one commit, listed newest first; the newer one deployed the accepted dataset.
+    const older = releaseTag(S1, 11, 1);
+    const newer = releaseTag(accepted.snapshot, 22, 1);
+    const logOlder = nextLog(null, null, entry(S1, H1, 11));
+    const logNewer = nextLog(logOlder, 'passed', entry(accepted.snapshot, accepted.manifest_sha256, 22));
+    const byTag: Record<string, Loose> = { [older]: logOlder, [newer]: logNewer };
+    const rel = (tag: string, id: number, at: string) => ({ tag_name: tag, id, draft: false, created_at: '2026-11-26T02:12:03Z', published_at: at, assets: [{ name: 'deployments.json', url: `https://api.github.com/assets/${tag}` }] });
+    const fetchImpl = async (url: string) => {
+      const json = (v: unknown) => ({ ok: true, status: 200, json: async () => v });
+      if (url.includes('/finance-data/releases?')) return json([rel(newer, 461190274, '2026-11-28T00:38:48Z'), rel(older, 460846896, '2026-11-27T16:38:49Z')]);
+      const a = /\/assets\/(data-.+)$/.exec(url);
+      if (a) return { ok: true, status: 200, arrayBuffer: async () => Buffer.from(canonicalJson(byTag[a[1]!])) };
+      if (/\/actions\/runs\/22$/.test(url)) return json({ status: 'completed' });
+      if (url.includes('/actions/runs/22/jobs')) return json({ jobs: [{ name: 'verify', conclusion: 'success' }] });
+      if (url.includes('/finance/actions/workflows/pages.yml/runs')) return json({ workflow_runs: [{ display_title: runName('data', accepted, newer), status: 'completed', conclusion: 'success' }] });
+      return { ok: false, status: 500 };
+    };
+    const facts = await readCollectFacts({ token: 't', repository: 'RadMageIRL/finance-data', siteRepository: 'RadMageIRL/finance', fetchImpl });
+    expect(facts.newestLog).toEqual(logNewer);
+    for (const mode of ['timer', 'manual']) {
+      expect(run({ mode, input: mode === 'manual' ? accepted : null, facts, deployed: accepted }).outcome).toBe('no-op');
+    }
+    // The 04:37Z pick (the older release's log) with the site deploying the accepted dataset:
+    // refused before any release exists, and the report raises publish-failed.
+    const wrongFacts = { newestLog: structuredClone(logOlder), newestRun: { completed: true, siteConclusion: 'success', verifyConclusion: 'success' } };
+    const out = newDir();
+    const refused = run({ mode: 'timer', input: null, facts: wrongFacts, deployed: accepted, outDir: out });
+    expect(refused).toMatchObject({ outcome: 'refused-deployed' });
+    expect(refused.problems[0]).toMatch(/already the deployed one/);
+    expect(readdirSync(out)).toEqual([]);
+    expect(failedAfterGates(refused, true, null)).toBe(true);
+    const keys = (plan: Loose[]) => plan.map((a) => [a.action, a.key]);
+    expect(keys(reportPlan({ openIssues: [], openKeys: new Set(), result: { failedAfterGates: failedAfterGates(refused, true, null), v3: null, person: false }, now: 'T' }))).toEqual([['create', 'publish-failed']]);
+    // A no-op or a gate refusal raises nothing; a newer accepted dataset than the site's is released.
+    expect(failedAfterGates({ outcome: 'no-op' }, false, null)).toBe(false);
+    expect(failedAfterGates({ outcome: 'refused-gate' }, true, null)).toBe(false);
+    expect(failedAfterGates({ outcome: 'assembled' }, false, 'passed')).toBe(false);
+    expect(failedAfterGates({ outcome: 'assembled' }, false, null)).toBe(true);
+    expect(run({ mode: 'timer', input: null, facts: wrongFacts, deployed: { snapshot: S1, manifest_sha256: H1 } }).outcome).toBe('assembled');
   });
 
   it('deletes stale drafts, uploads exactly the four assets to a draft, then publishes it', async () => {

@@ -180,6 +180,40 @@ export function privateLogCopy(newestLog, newestPost) {
   return log;
 }
 
+// ---- The order of releases (22.4, amendment 3 to v0.8, owner decision P115) ----
+
+const releaseKey = (r) => {
+  const t = typeof r?.published_at === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(r.published_at) ? Date.parse(r.published_at) : NaN;
+  if (!Number.isFinite(t)) throw new Error(`the release ${r?.tag_name} has no valid published_at`);
+  if (!Number.isSafeInteger(r.id) || r.id <= 0) throw new Error(`the release ${r?.tag_name} has no valid numeric id`);
+  return [t, r.id];
+};
+
+/**
+ * Orders GitHub releases oldest first: by `published_at`, ties broken by the numeric release id.
+ * Never by `created_at`, which GitHub sets to the date of the tagged commit, so releases tagged on
+ * one commit share it (the 2026-11-28 04:37Z duplicate release). Throws on a release without a
+ * valid `published_at` or id, so a reader fails closed instead of guessing.
+ */
+export function compareReleases(a, b) {
+  const [ta, ia] = releaseKey(a);
+  const [tb, ib] = releaseKey(b);
+  return ta - tb || ia - ib;
+}
+
+/** The newest of the given published releases (22.4), or null when there is none. */
+export function newestRelease(releases) {
+  const list = [...releases];
+  for (const r of list) releaseKey(r);
+  return list.length ? list.sort(compareReleases)[list.length - 1] : null;
+}
+
+/** Null when a release's own log ends with its own entry (22.4), else the problem. */
+export function ownLogProblem(tag, log) {
+  const last = log?.deployments?.at(-1);
+  return last && last.release === tag ? null : `the log of the newest release ${tag} does not end with its own entry (it ends with ${last ? last.release : 'nothing'})`;
+}
+
 /** The dataset of the newest entry whose `post` is `passed` or `failed` (22.4), or null. */
 export function deployedDataset(log) {
   const e = [...(log?.deployments ?? [])].reverse().find((d) => d.verification.post === 'passed' || d.verification.post === 'failed');

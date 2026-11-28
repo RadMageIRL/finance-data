@@ -345,7 +345,7 @@ describe('v0.8: the watcher reads the public manifest and checks the release his
   it('reads the releases, the newest release assets and the public files; nothing when no data release exists', async () => {
     const b = build();
     const seen: string[] = [];
-    const releasesJson = b.releases.map((r, i) => ({ tag_name: r.tag, draft: false, assets: r.assetNames.map((name, k) => ({ name, url: `https://api.github.com/assets/${i}-${k}` })) }));
+    const releasesJson = b.releases.map((r, i) => ({ tag_name: r.tag, id: 100 + i, published_at: `2026-11-24T1${5 + i}:00:00Z`, draft: false, assets: r.assetNames.map((name, k) => ({ name, url: `https://api.github.com/assets/${i}-${k}` })) }));
     const assetBytes = (i: number, name: string) => (i === 1 ? b.newest.assets[name] : Buffer.from(canonicalJson(b.releases[0]!.log)));
     const fetchImpl = async (url: string) => {
       seen.push(url);
@@ -370,5 +370,40 @@ describe('v0.8: the watcher reads the public manifest and checks the release his
     const none = await readPublicationFacts({ token: 't', repository: 'RadMageIRL/finance-data', fetchImpl: async () => ({ ok: true, status: 200, json: async () => [{ tag_name: 'v0.1.0', draft: false, assets: [] }] }) });
     expect(none).toBeNull();
     await expect(readPublicationFacts({ token: 't', repository: 'RadMageIRL/finance-data', fetchImpl: async () => ({ ok: false, status: 403 }) })).rejects.toThrow(/answered 403/);
+  });
+
+  it('selects the latest valid publication history by published_at, not the longest log, and reports a forked history until the erroneous release is gone (amendment 3)', async () => {
+    // The 2026-11-28 shape: three releases on one commit (created_at tied); the duplicate D is
+    // built on A and has as many entries as B, which deployed S2.
+    const log1 = nextLog(null, null, entry(S1, 1));
+    const logB = nextLog(log1, 'passed', entry(S2, 2));
+    const logD = nextLog(log1, 'passed', entry(S2, 3));
+    const assetsOf = (id: string, log: Loose) => releaseAssets(new Map([...tree(id), ['status/deployments.json', canonicalJson(log)]]));
+    const A = { tag: releaseTag(S1, 1, 1), id: 460846896, at: '2026-11-27T16:38:49Z', assets: assetsOf(S1, log1) };
+    const B = { tag: releaseTag(S2, 2, 1), id: 461190274, at: '2026-11-28T00:38:48Z', assets: assetsOf(S2, logB) };
+    const D = { tag: releaseTag(S2, 3, 1), id: 461303156, at: '2026-11-28T04:38:45Z', assets: assetsOf(S2, logD) };
+    const facts = (list: Loose[]) => readPublicationFacts({ token: 't', repository: 'RadMageIRL/finance-data', publicBase: 'https://example.test/econ/', fetchImpl: async (url: string) => {
+      if (url.includes('/releases?')) return { ok: true, status: 200, json: async () => list.map((r) => ({ tag_name: r.tag, id: r.id, draft: false, created_at: '2026-11-26T02:12:03Z', published_at: r.at, assets: Object.keys(r.assets).map((name) => ({ name, url: `https://api.github.com/assets/${r.tag}/${name}` })) })) };
+      const m = /assets\/(data-[^/]+)\/(.+)$/.exec(url);
+      if (m) {
+        const bytes = [A, B, D].find((r) => r.tag === m[1])!.assets[m[2]!];
+        return { ok: true, status: 200, arrayBuffer: async () => bytes };
+      }
+      if (url === 'https://example.test/econ/status/deployments.json') return { ok: true, status: 200, text: async () => canonicalJson(logB) };
+      if (url === 'https://example.test/econ/manifest.json') return { ok: true, status: 200, text: async () => JSON.stringify({ health: { expected_next_update_by: '2026-11-28T08:00:00Z' }, series: {} }) };
+      return { ok: false, status: 500 };
+    } });
+    for (const list of [[D, B, A], [A, B, D], [B, D, A]]) {
+      const forked = await facts(list);
+      expect(forked.newest.tag).toBe(D.tag);
+      expect(releaseHistoryProblems(forked)).toContain(`release ${B.tag} is not named by the newest log`);
+    }
+    // The duplicate deleted (P115): B is the newest again and its history is whole.
+    for (const list of [[B, A], [A, B]]) {
+      const whole = await facts(list);
+      expect(whole.newest.tag).toBe(B.tag);
+      expect(whole.deployedLog).toEqual(logB);
+      expect(releaseHistoryProblems(whole)).toEqual([]);
+    }
   });
 });

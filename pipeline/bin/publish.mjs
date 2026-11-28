@@ -46,6 +46,12 @@ export function assemble(o) {
     }
   }
   if ((o.mode === 'manual' || o.mode === 'timer') && nothingToPublish(prevLog, accepted)) return { outcome: 'no-op', problems: [] };
+  // Amendment 3 (P115): a dataset the site already deploys is never released again. The newest
+  // release's log disagrees with the site here, and the site build would refuse the release as
+  // not newer only after an immutable release had been made.
+  if ((o.mode === 'manual' || o.mode === 'timer') && sameDataset(o.deployed, accepted)) {
+    return { outcome: 'refused-deployed', problems: [`the accepted dataset ${accepted.snapshot} is already the deployed one, but the newest release's log does not record it deployed with post passed`] };
+  }
   if (o.mode === 'redeploy' && !verifiedPairs(prevLog).some((p) => sameDataset(p.dataset, o.target.dataset) && p.site_commit === o.target.site_commit)) return { outcome: 'refused-gate', problems: ['the redeploy target is not a verified pair'] };
   const dataset = o.mode === 'redeploy' ? o.target.dataset : accepted;
   const siteCommit = o.mode === 'redeploy' ? o.target.site_commit : o.siteCommit;
@@ -182,6 +188,16 @@ export async function v3At({ base, dataset, get, sleep, attempts = 31, retryWait
 }
 
 /**
+ * Whether a run failed after its gates (22.6, `publish-failed`): any assemble outcome other than
+ * a gate refusal or `no-op` (so `refused-v2` and `refused-deployed` count, amendment 3), then a
+ * failed job or no V3 result. `outcome` is the assemble job's outcome.json, null when it wrote none.
+ */
+export function failedAfterGates(outcome, jobsFailed, v3) {
+  const gatedOut = !outcome || outcome.outcome === 'no-op' || outcome.outcome === 'refused-gate';
+  return !gatedOut && (outcome.outcome !== 'assembled' || jobsFailed || v3 === null);
+}
+
+/**
  * The report job (22.6 job 5): the reconcile of the two keys this workflow owns. `result`: {
  * failedAfterGates, v3 ('passed' | 'failed' | null), person }. `open` is the ledger of open
  * issues with these keys as alerts. Returns the plan.
@@ -312,9 +328,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       const { keyOf } = await import('./issues.mjs');
       const openKeys = new Set(open.map((i_) => keyOf(i_)).filter((k) => OWN_KEYS.has(k)));
       const verify = existsSync(join(out, 'verify.json')) ? JSON.parse(readFileSync(join(out, 'verify.json'), 'utf8')) : { v3: null };
-      const gatedOut = !outcome || outcome.outcome === 'no-op' || outcome.outcome === 'refused-gate';
-      const failedAfterGates = !gatedOut && (outcome.outcome !== 'assembled' || env.JOBS_FAILED === 'true' || verify.v3 === null);
-      const plan = reportPlan({ openIssues: open, openKeys, result: { failedAfterGates, v3: verify.v3, person: env.AUTOMATIC !== 'true' }, now: `${new Date().toISOString().slice(0, 19)}Z` });
+      const plan = reportPlan({ openIssues: open, openKeys, result: { failedAfterGates: failedAfterGates(outcome, env.JOBS_FAILED === 'true', verify.v3), v3: verify.v3, person: env.AUTOMATIC !== 'true' }, now: `${new Date().toISOString().slice(0, 19)}Z` });
       const done = await applyPlan(api, plan);
       console.log(done.length ? done.join('\n') : 'issues: nothing to change');
       process.exit(0);

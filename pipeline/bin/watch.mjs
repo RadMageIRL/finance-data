@@ -13,7 +13,7 @@ import { healthAlerts, sanitizeAlerts } from '../lib/alerts.mjs';
 import { runFacts } from '../lib/run-facts.mjs';
 import { scheduleHealth } from '../lib/schedule-health.mjs';
 import { applyPlan, githubApi, reconcilePlan } from './issues.mjs';
-import { releaseHistoryProblems } from '../lib/publication.mjs';
+import { newestRelease, releaseHistoryProblems } from '../lib/publication.mjs';
 
 /** The findings of 14.3 that need no manifest (21.9). */
 export const RUN_KEYS = ['consecutive-failures', 'inactivity', 'scheduled-run-gap', 'workflow-disabled'];
@@ -71,7 +71,10 @@ export async function readPublicationFacts({ token, repository, fetchImpl = fetc
     const logBytes = await asset(rel, 'deployments.json');
     releases.push({ tag: rel.tag_name, assetNames: rel.assets.map((x) => x.name), log: logBytes ? JSON.parse(logBytes.toString('utf8')) : { deployments: [] }, rel });
   }
-  const top = [...releases].sort((a, b) => a.log.deployments.length - b.log.deployments.length).pop();
+  // The newest release as 22.4 defines it (amendment 3): published_at, then numeric id. Not the
+  // longest log, which ties when two releases fork the history at the same length.
+  const newestRel = newestRelease(data);
+  const top = releases.find((r) => r.rel === newestRel);
   const assets = {};
   for (const name of top.assetNames) assets[name] = await asset(top.rel, name);
   const publicJson = async (path) => {

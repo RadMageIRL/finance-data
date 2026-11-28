@@ -2,8 +2,9 @@
 // The publication facts of a collection run (DATA_CONVENTIONS 22.4, v0.8): the newest `data-*`
 // release's deployment log and the outcomes of the publication run that made it (whether it has
 // completed, its `verify` job, and the Finance site run that names the release). Reads only,
-// through the GitHub REST API. Publications are serial (22.6), so the newest release by creation
-// time carries the longest log; the watcher checks the whole history (22.7). Writes the facts as
+// through the GitHub REST API. Publications are serial (22.6), so the newest release (by
+// published_at, then numeric id: 22.4, amendment 3) carries the longest log; the watcher checks
+// the whole history (22.7). Writes the facts as
 // JSON; exits 3 when they cannot be read, so the collection run continues with
 // --publication-facts-unavailable (22.4).
 //
@@ -11,6 +12,7 @@
 //     node pipeline/bin/publication-facts.mjs --out <file>
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { newestRelease, ownLogProblem } from '../lib/publication.mjs';
 
 const TAG = /^data-(\d{8}T\d{6}Z)-(\d+)-(\d+)$/;
 
@@ -29,12 +31,15 @@ export async function readCollectFacts({ token, repository, siteRepository, fetc
     releases.push(...batch);
     if (batch.length < 100) break;
   }
-  const data = releases.filter((r) => !r.draft && TAG.test(r.tag_name)).sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
-  if (!data.length) return { newestLog: null, newestRun: null };
-  const newest = data[data.length - 1];
+  // The newest release by published_at, then numeric id (22.4, amendment 3): never created_at,
+  // which is the tagged commit's date and ties for releases tagged on one commit.
+  const newest = newestRelease(releases.filter((r) => !r.draft && TAG.test(r.tag_name)));
+  if (!newest) return { newestLog: null, newestRun: null };
   const logAsset = newest.assets.find((a) => a.name === 'deployments.json');
   if (!logAsset) throw new Error(`the release ${newest.tag_name} has no deployments.json`);
   const newestLog = JSON.parse(Buffer.from(await (await get(logAsset.url, 'application/octet-stream')).arrayBuffer()).toString('utf8'));
+  const own = ownLogProblem(newest.tag_name, newestLog);
+  if (own) throw new Error(own);
   const runId = TAG.exec(newest.tag_name)[2];
   const run = await (await get(`${api(repository)}/actions/runs/${runId}`)).json();
   if (run.status !== 'completed') return { newestLog, newestRun: { completed: false } };
